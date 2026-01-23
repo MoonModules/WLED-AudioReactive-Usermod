@@ -97,6 +97,14 @@
 #endif
 #endif
 
+// WLED does not have WLED-MM's USER_PRINT* macros
+#ifndef USER_PRINT
+  #define USER_PRINT(x) DEBUGSR_PRINT(x)
+  #define USER_PRINTLN(x) DEBUGSR_PRINTLN(x)
+  #define USER_PRINTF(x...) DEBUGSR_PRINTF(x)
+  #define USER_FLUSH()
+#endif
+
 #if defined(MIC_LOGGER) || defined(FFT_SAMPLING_LOG)
   #define PLOT_PRINT(x) DEBUGOUT(x)
   #define PLOT_PRINTLN(x) DEBUGOUTLN(x)
