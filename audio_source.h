@@ -50,9 +50,10 @@ constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not c
 #endif
 
 // PinManager API Compatibility
-// By default, this usermod uses WLED V16+ PinManager API (3-parameter allocatePin, 2-parameter deallocatePin)
-// Define WLED_USE_PINMANAGER_V14 to use the older V14 API (2-parameter allocatePin, 1-parameter deallocatePin)
-// Note: joinWire() only exists in V14, not in V16+
+// By default, this usermod uses WLED V16+ PinManager API (PinManager:: static class methods)
+// Define WLED_USE_PINMANAGER_V14 to use the older V14 API (pinManager instance methods)
+// The method signatures are the same, but V14 uses lowercase 'pinManager' instance
+// while V16+ uses uppercase 'PinManager::' static class methods
 // Example: -D WLED_USE_PINMANAGER_V14
 // #define WLED_USE_PINMANAGER_V14  // Uncomment for V14 compatibility mode
 
@@ -198,20 +199,18 @@ class AudioSource {
 
 // Helper functions for PinManager API compatibility
 #ifdef WLED_USE_PINMANAGER_V14
-  // V14 API compatibility - 2 parameters for allocatePin, 1 for deallocatePin
+  // V14 API compatibility - uses pinManager instance methods (lowercase)
   inline bool ar_allocatePin(int8_t pin, bool output, PinOwner owner) {
-    (void)owner; // Unused in V14 API
-    return PinManager::allocatePin(pin, output);
+    return pinManager.allocatePin(pin, output, owner);
   }
   inline void ar_deallocatePin(int8_t pin, PinOwner owner) {
-    (void)owner; // Unused in V14 API
-    PinManager::deallocatePin(pin);
+    pinManager.deallocatePin(pin, owner);
   }
   inline bool ar_joinWire(int8_t sda, int8_t scl) {
-    return PinManager::joinWire(sda, scl);
+    return pinManager.joinWire(sda, scl);
   }
 #else
-  // V16+ API (default) - 3 parameters for allocatePin, 2 for deallocatePin
+  // V16+ API (default) - uses PinManager static class methods (uppercase)
   inline bool ar_allocatePin(int8_t pin, bool output, PinOwner owner) {
     return PinManager::allocatePin(pin, output, owner);
   }
@@ -219,13 +218,9 @@ class AudioSource {
     PinManager::deallocatePin(pin, owner);
   }
   inline bool ar_joinWire(int8_t sda, int8_t scl) {
-    // joinWire does not exist in V16+, need to handle I2C initialization differently
-    // For now, return false to indicate failure in V16 mode when this is called
-    // This should only be called in WLEDMM builds which may have their own implementation
-    #ifdef WLEDMM
-      #warning "joinWire() does not exist in WLED V16+ PinManager API. WLEDMM builds may need adjustment."
-    #endif
+    USER_PRINTLN("AR: WARNING PinManager::joinWire() unsupported - returning false.");
     return false;
+    // return PinManager::joinWire(sda, scl); // TODO: implement PinManager::joinWire()
   }
 #endif
 
