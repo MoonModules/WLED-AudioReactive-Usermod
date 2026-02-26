@@ -32,7 +32,6 @@ AudioProcessor processor;
 // Configuration
 const uint16_t SAMPLE_RATE = 18000;
 const uint16_t FFT_SIZE = 512;
-const uint8_t NUM_GEQ_CHANNELS = 16;
 
 void setup() {
     Serial.begin(115200);

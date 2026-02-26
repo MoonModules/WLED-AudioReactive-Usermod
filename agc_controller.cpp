@@ -10,6 +10,19 @@
 #include "agc_controller.h"
 #include <math.h>
 
+// Define static constexpr arrays
+constexpr double AGCController::AGC_SAMPLE_DECAY[3];
+constexpr float AGCController::AGC_ZONE_LOW[3];
+constexpr float AGCController::AGC_ZONE_HIGH[3];
+constexpr float AGCController::AGC_ZONE_STOP[3];
+constexpr float AGCController::AGC_TARGET0[3];
+constexpr float AGCController::AGC_TARGET0_UP[3];
+constexpr float AGCController::AGC_TARGET1[3];
+constexpr double AGCController::AGC_FOLLOW_FAST[3];
+constexpr double AGCController::AGC_FOLLOW_SLOW[3];
+constexpr double AGCController::AGC_CONTROL_KP[3];
+constexpr double AGCController::AGC_CONTROL_KI[3];
+
 AGCController::AGCController() {
     reset();
 }

@@ -13,7 +13,6 @@
 
 #ifdef ARDUINO_ARCH_ESP32
 #include <Wire.h>
-#include "wled.h"
 #include <driver/i2s.h>
 #include <driver/adc.h>
 #include <soc/i2s_reg.h>  // needed for SPH0465 timing workaround (classic ESP32)

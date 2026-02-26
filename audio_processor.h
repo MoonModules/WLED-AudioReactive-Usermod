@@ -14,8 +14,8 @@
 
 #include <Arduino.h>
 
-// Forward declarations
-class AudioSource;
+// Forward declarations (actual headers not needed for standalone mode)
+class AudioSource;  // Defined in audio_source.h (WLED dependency)
 class AudioFilters;
 class AGCController;
 

@@ -8,7 +8,9 @@
 */
 
 #include "audio_processor.h"
-#include "audio_source.h"
+// audio_source.h is only needed when using AudioSource integration with WLED
+// For standalone usage, it's not required
+// #include "audio_source.h"
 #include "audio_filters.h"
 #include "agc_controller.h"
 
