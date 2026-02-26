@@ -20,6 +20,18 @@
 #include <arduinoFFT.h>
 #endif
 
+// Helper function for float mapping
+static inline float mapf(float x, float in_min, float in_max, float out_min, float out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+// Helper function for constraining values
+static inline float constrain(float val, float min_val, float max_val) {
+    if (val < min_val) return min_val;
+    if (val > max_val) return max_val;
+    return val;
+}
+
 // Pink noise frequency response correction tables
 #define MAX_PINK 10
 static const float fftResultPink[MAX_PINK+1][NUM_GEQ_CHANNELS] = {
@@ -142,99 +154,176 @@ float AudioProcessor::fftAddAvg(int from, int to) {
     }
 }
 
-void AudioProcessor::computeFrequencyBands(bool noiseGateOpen, bool fastpath) {
-    // This is a simplified version - the full implementation would have
-    // all the frequency band calculations from FFTcode()
-    // For now, we'll provide the structure
-
-    float wc = 1.0f; // Windowing correction
-
-    // Map FFT bins to 16 GEQ channels
-    // These mappings are frequency-dependent and tuned for audio visualization
-    m_fftCalc[ 0] = wc * fftAddAvg(1,1);     // Sub-bass
-    m_fftCalc[ 1] = wc * fftAddAvg(2,2);     // Bass
-    m_fftCalc[ 2] = wc * fftAddAvg(3,3);     // Bass
-    m_fftCalc[ 3] = wc * fftAddAvg(4,5);     // Bass + midrange
-    m_fftCalc[ 4] = wc * fftAddAvg(6,7);     // Midrange
-    m_fftCalc[ 5] = wc * fftAddAvg(8,10);    // Midrange
-    m_fftCalc[ 6] = wc * fftAddAvg(11,14);   // Midrange
-    m_fftCalc[ 7] = wc * fftAddAvg(15,19);   // Upper midrange
-    m_fftCalc[ 8] = wc * fftAddAvg(20,25);   // Upper midrange
-    m_fftCalc[ 9] = wc * fftAddAvg(26,33);   // Presence
-    m_fftCalc[10] = wc * fftAddAvg(34,43);   // Presence
-    m_fftCalc[11] = wc * fftAddAvg(44,56);   // High
-    m_fftCalc[12] = wc * fftAddAvg(57,73);   // High
-    m_fftCalc[13] = wc * fftAddAvg(74,94);   // High
-    m_fftCalc[14] = wc * fftAddAvg(95,122);  // Very high
-    m_fftCalc[15] = wc * fftAddAvg(123,164) * 0.70f; // Very high (damped)
+void AudioProcessor::computeFrequencyBands(bool noiseGateOpen, bool fastpath, float wc) {
+    // Mapping of FFT result bins to frequency channels
+    if (noiseGateOpen) {
+        if (m_config.freqDist == 0) {
+            /* new mapping, optimized for 22050 Hz by softhack007 --- update: removed overlap */
+            if (m_config.useInputFilter == 1) {
+                // skip frequencies below 100hz
+                m_fftCalc[ 0] = wc * 0.8f * fftAddAvg(3,3);
+                m_fftCalc[ 1] = wc * 0.9f * fftAddAvg(4,4);
+                m_fftCalc[ 2] = wc * fftAddAvg(5,5);
+                m_fftCalc[ 3] = wc * fftAddAvg(6,6);
+                // don't use the last bins from 206 to 255.
+                m_fftCalc[15] = wc * fftAddAvg(165,205) * 0.75f;
+            } else {
+                m_fftCalc[ 0] = wc * fftAddAvg(1,1);               // 1    43 - 86   sub-bass
+                m_fftCalc[ 1] = wc * fftAddAvg(2,2);               // 1    86 - 129  bass
+                m_fftCalc[ 2] = wc * fftAddAvg(3,4);               // 2   129 - 216  bass
+                m_fftCalc[ 3] = wc * fftAddAvg(5,6);               // 2   216 - 301  bass + midrange
+                // don't use the last bins from 216 to 255. They are usually contaminated by aliasing (aka noise)
+                m_fftCalc[15] = wc * fftAddAvg(165,215) * 0.70f;   // 50 7106 - 9259 high
+            }
+            m_fftCalc[ 4] = wc * fftAddAvg(7,9);                 // 3   301 - 430  midrange
+            m_fftCalc[ 5] = wc * fftAddAvg(10,12);               // 3   430 - 560  midrange
+            m_fftCalc[ 6] = wc * fftAddAvg(13,18);               // 5   560 - 818  midrange
+            m_fftCalc[ 7] = wc * fftAddAvg(19,25);               // 7   818 - 1120 midrange -- 1Khz should always be the center !
+            m_fftCalc[ 8] = wc * fftAddAvg(26,32);               // 7  1120 - 1421 midrange
+            m_fftCalc[ 9] = wc * fftAddAvg(33,43);               // 9  1421 - 1895 midrange
+            m_fftCalc[10] = wc * fftAddAvg(44,55);               // 12 1895 - 2412 midrange + high mid
+            m_fftCalc[11] = wc * fftAddAvg(56,69);               // 14 2412 - 3015 high mid
+            m_fftCalc[12] = wc * fftAddAvg(70,85);               // 16 3015 - 3704 high mid
+            m_fftCalc[13] = wc * fftAddAvg(86,103);              // 18 3704 - 4479 high mid
+            m_fftCalc[14] = wc * fftAddAvg(104,164) * 0.88f;     // 61 4479 - 7106 high mid + high
+        } else if (m_config.freqDist == 1) { // Rightshift
+            if (m_config.useInputFilter == 1) {
+                // skip frequencies below 100hz
+                m_fftCalc[ 0] = wc * 0.8f * fftAddAvg(1,1);
+                m_fftCalc[ 1] = wc * 0.9f * fftAddAvg(2,2);
+                m_fftCalc[ 2] = wc * fftAddAvg(3,3);
+                m_fftCalc[ 3] = wc * fftAddAvg(4,4);
+                m_fftCalc[15] = wc * fftAddAvg(165,205) * 0.75f;
+            } else {
+                m_fftCalc[ 0] = wc * fftAddAvg(1,1);
+                m_fftCalc[ 1] = wc * fftAddAvg(2,2);
+                m_fftCalc[ 2] = wc * fftAddAvg(3,3);
+                m_fftCalc[ 3] = wc * fftAddAvg(4,4);
+                m_fftCalc[15] = wc * fftAddAvg(165,215) * 0.70f;
+            }
+            m_fftCalc[ 4] = wc * fftAddAvg(5,6);
+            m_fftCalc[ 5] = wc * fftAddAvg(7,8);
+            m_fftCalc[ 6] = wc * fftAddAvg(9,10);
+            m_fftCalc[ 7] = wc * fftAddAvg(11,13);
+            m_fftCalc[ 8] = wc * fftAddAvg(14,18);
+            m_fftCalc[ 9] = wc * fftAddAvg(19,25);
+            m_fftCalc[10] = wc * fftAddAvg(26,36);
+            m_fftCalc[11] = wc * fftAddAvg(37,45);
+            m_fftCalc[12] = wc * fftAddAvg(46,66);
+            m_fftCalc[13] = wc * fftAddAvg(67,97);
+            m_fftCalc[14] = wc * fftAddAvg(98,164) * 0.88f;
+        }
+    } else {
+        // noise gate closed - just decay old values
+        for (int i=0; i < m_config.numGEQChannels; i++) {
+            m_fftCalc[i] *= 0.85f;  // decay to zero
+            if (m_fftCalc[i] < 4.0f) m_fftCalc[i] = 0.0f;
+        }
+    }
 }
 
 void AudioProcessor::postProcessFFT(bool noiseGateOpen, bool fastpath) {
-    // Apply pink noise correction and scaling
+    // Post-processing of frequency channels (pink noise adjustment, AGC, smoothing, scaling)
     for (int i = 0; i < m_config.numGEQChannels; i++) {
         if (noiseGateOpen) {
-            // Apply frequency response correction
+            // Adjustment for frequency curves
             m_fftCalc[i] *= fftResultPink[m_config.pinkIndex][i];
 
             if (m_config.scalingMode > 0) {
-                m_fftCalc[i] *= FFT_DOWNSCALE;
+                m_fftCalc[i] *= FFT_DOWNSCALE;  // adjustment related to FFT windowing function
             }
 
-            // Apply AGC or manual gain
+            // Manual linear adjustment of gain using sampleGain adjustment for different input types
             if (m_agcController && m_agcController->isEnabled()) {
                 m_fftCalc[i] *= m_agcController->getMultiplier();
+            } else {
+                // Manual gain: sampleGain/40.0 * inputLevel/128.0 + 1.0/16.0
+                m_fftCalc[i] *= ((float)m_config.sampleGain/40.0f * (float)m_config.inputLevel/128.0f + 1.0f/16.0f);
             }
 
             if (m_fftCalc[i] < 0) m_fftCalc[i] = 0;
         }
 
-        // Smoothing/limiting
-        float speed = fastpath ? 0.76f : 1.0f;
+        // Filter correction for sampling speed
+        float speed = 1.0f;  // normal mode (43hz)
+        if (fastpath) speed = 0.6931471805599453094f * 1.1f;  // ln(2) * 1.1 in fast mode (86hz)
 
-        if (m_fftCalc[i] > m_fftAvg[i]) {
-            // Rise fast
-            m_fftAvg[i] += speed * 0.78f * (m_fftCalc[i] - m_fftAvg[i]);
+        if (m_config.limiterOn) {
+            // Limiter ON -> smooth results
+            if (m_fftCalc[i] > m_fftAvg[i]) {  // rise fast
+                m_fftAvg[i] += speed * 0.78f * (m_fftCalc[i] - m_fftAvg[i]);
+            } else {  // fall slow - configurable decay time
+                if (m_config.decayTime < 150)       m_fftAvg[i] += speed * 0.50f * (m_fftCalc[i] - m_fftAvg[i]);
+                else if (m_config.decayTime < 250)  m_fftAvg[i] += speed * 0.40f * (m_fftCalc[i] - m_fftAvg[i]);
+                else if (m_config.decayTime < 500)  m_fftAvg[i] += speed * 0.33f * (m_fftCalc[i] - m_fftAvg[i]);
+                else if (m_config.decayTime < 1000) m_fftAvg[i] += speed * 0.22f * (m_fftCalc[i] - m_fftAvg[i]);
+                else if (m_config.decayTime < 2000) m_fftAvg[i] += speed * 0.17f * (m_fftCalc[i] - m_fftAvg[i]);  // default
+                else if (m_config.decayTime < 3000) m_fftAvg[i] += speed * 0.14f * (m_fftCalc[i] - m_fftAvg[i]);
+                else if (m_config.decayTime < 4000) m_fftAvg[i] += speed * 0.10f * (m_fftCalc[i] - m_fftAvg[i]);
+                else m_fftAvg[i] += speed * 0.05f * (m_fftCalc[i] - m_fftAvg[i]);
+            }
         } else {
-            // Fall with configurable decay
-            m_fftAvg[i] += speed * 0.22f * (m_fftCalc[i] - m_fftAvg[i]);
+            // Limiter OFF
+            if (fastpath) {
+                // fast mode -> average last two results
+                float tmp = m_fftCalc[i];
+                m_fftCalc[i] = 0.7f * tmp + 0.3f * m_fftAvg[i];
+                m_fftAvg[i] = tmp; // store current sample for next run
+            } else {
+                // normal mode -> no adjustments
+                m_fftAvg[i] = m_fftCalc[i]; // keep filters up-to-date
+            }
         }
 
-        // Constrain values
+        // Constrain internal vars
         m_fftCalc[i] = constrain(m_fftCalc[i], 0.0f, 1023.0f);
         m_fftAvg[i] = constrain(m_fftAvg[i], 0.0f, 1023.0f);
 
-        // Apply scaling mode
-        float currentResult = m_fftAvg[i];
+        // Continue with filtered result (limiter on) or unfiltered result (limiter off)
+        float currentResult = m_config.limiterOn ? m_fftAvg[i] : m_fftCalc[i];
 
         switch (m_config.scalingMode) {
-            case 1: // Logarithmic
-                currentResult *= 0.42f;
-                currentResult -= 8.0f;
+            case 1:
+                // Logarithmic scaling
+                currentResult *= 0.42f;                     // 42 is the answer ;-)
+                currentResult -= 8.0f;                      // skip the lowest row
                 if (currentResult > 1.0f) currentResult = logf(currentResult);
                 else currentResult = 0.0f;
-                currentResult *= 0.85f + (float(i)/18.0f);
-                currentResult = map(currentResult, 0.0f, LOG_256, 0.0f, 255.0f);
+                currentResult *= 0.85f + (float(i)/18.0f);  // extra up-scaling for high frequencies
+                currentResult = mapf(currentResult, 0.0f, LOG_256, 0.0f, 255.0f);
                 break;
-
-            case 2: // Linear
+            case 2:
+                // Linear scaling
                 currentResult *= 0.30f;
                 currentResult -= 2.0f;
                 if (currentResult < 1.0f) currentResult = 0.0f;
                 currentResult *= 0.85f + (float(i)/1.8f);
                 break;
-
-            case 3: // Square root
+            case 3:
+                // Square root scaling
                 currentResult *= 0.38f;
                 currentResult -= 6.0f;
                 if (currentResult > 1.0f) currentResult = sqrtf(currentResult);
                 else currentResult = 0.0f;
                 currentResult *= 0.85f + (float(i)/4.5f);
-                currentResult = map(currentResult, 0.0f, 16.0f, 0.0f, 255.0f);
+                currentResult = mapf(currentResult, 0.0f, 16.0f, 0.0f, 255.0f);
+                break;
+            case 0:
+            default:
+                // no scaling - leave freq bins as-is
+                currentResult -= 2.0f; // just a bit more room for peaks
                 break;
         }
 
-        // Store final result
-        m_fftResult[i] = constrain((int)currentResult, 0, 255);
+        // Apply extra "GEQ Gain" if AGC is enabled
+        if (m_agcController && m_agcController->isEnabled()) {
+            float post_gain = (float)m_config.inputLevel/128.0f;
+            if (post_gain < 1.0f) post_gain = ((post_gain -1.0f) * 0.8f) +1.0f;
+            currentResult *= post_gain;
+        }
+
+        // Store final result with proper rounding
+        m_fftResult[i] = constrain((int)(currentResult + 0.5f), 0, 255);
     }
 }
 
@@ -261,6 +350,73 @@ void AudioProcessor::autoResetPeak(uint16_t minShowDelay) {
     }
 }
 
+void AudioProcessor::limitSampleDynamics(float& volumeSmth) {
+    if (!m_config.limiterOn) return;
+
+    constexpr float bigChange = 196.0f;  // Representative large sample value
+
+    unsigned long currentTime = millis();
+    long delta_time = currentTime - m_lastDynamicsTime;
+    delta_time = constrain(delta_time, 1, 1000);  // 1ms to 1000ms
+
+    float deltaSample = volumeSmth - m_lastVolumeSmth;
+
+    // Apply attack limiting
+    if (m_config.decayTime > 0) {  // Note: Using decayTime for attack per original code
+        float maxAttack = bigChange * float(delta_time) / float(m_config.decayTime);
+        if (deltaSample > maxAttack) deltaSample = maxAttack;
+    }
+
+    // Apply decay limiting
+    if (m_config.decayTime > 0) {
+        float maxDecay = -bigChange * float(delta_time) / float(m_config.decayTime);
+        if (deltaSample < maxDecay) deltaSample = maxDecay;
+    }
+
+    volumeSmth = m_lastVolumeSmth + deltaSample;
+
+    m_lastVolumeSmth = volumeSmth;
+    m_lastDynamicsTime = currentTime;
+}
+
+void AudioProcessor::limitGEQDynamics(bool gotNewSample) {
+    if (!m_config.limiterOn) return;
+
+    constexpr float bigChange = 202.0f;
+    constexpr float smooth = 0.8f;
+
+    // If new sample, copy fftResult to fftCalc and use fftAvg for output
+    if (gotNewSample) {
+        for (unsigned i = 0; i < m_config.numGEQChannels; i++) {
+            m_fftCalc[i] = m_fftResult[i];
+            m_fftResult[i] = m_fftAvg[i];
+        }
+    }
+
+    unsigned long currentTime = millis();
+    long delta_time = currentTime - m_lastGEQDynamicsTime;
+    delta_time = constrain(delta_time, 1, 1000);
+
+    float maxAttack = (m_config.decayTime <= 0) ? 255.0f :
+                      (bigChange * float(delta_time) / float(m_config.decayTime));
+    float maxDecay = (m_config.decayTime <= 0) ? -255.0f :
+                     (-bigChange * float(delta_time) / float(m_config.decayTime));
+
+    for (unsigned i = 0; i < m_config.numGEQChannels; i++) {
+        float deltaSample = m_fftCalc[i] - m_fftAvg[i];
+
+        if (deltaSample > maxAttack) deltaSample = maxAttack;
+        if (deltaSample < maxDecay) deltaSample = maxDecay;
+
+        deltaSample *= smooth;
+
+        m_fftAvg[i] = constrain(m_fftAvg[i] + deltaSample, 0.0f, 255.0f);
+        m_fftResult[i] = m_fftAvg[i];
+    }
+
+    m_lastGEQDynamicsTime = currentTime;
+}
+
 void AudioProcessor::processSamples(float* samples, size_t count) {
     if (!m_initialized || !samples || count == 0) return;
 
@@ -276,7 +432,8 @@ void AudioProcessor::processSamples(float* samples, size_t count) {
 
     // For now, just compute frequency bands from existing FFT results
     bool noiseGateOpen = m_agcController ? (m_agcController->getSampleAGC() > 10) : true;
-    computeFrequencyBands(noiseGateOpen, false);
+    float wc = 1.0f; // Window correction factor
+    computeFrequencyBands(noiseGateOpen, false, wc);
     postProcessFFT(noiseGateOpen, false);
     detectPeak();
 
@@ -337,21 +494,238 @@ void AudioProcessor::fftTaskWrapper(void* parameter) {
 }
 
 void AudioProcessor::fftTask() {
-    // This would contain the full FFT processing loop from FFTcode()
-    // For now, this is a placeholder
+    // Full FFT processing loop migrated from FFTcode()
     const TickType_t xFrequency = m_config.minCycle * portTICK_PERIOD_MS;
+    const TickType_t xFrequencyDouble = m_config.minCycle * portTICK_PERIOD_MS * 2;
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
+    bool isFirstRun = false;
+    bool haveOldSamples = false;
+    bool usingOldSamples = false;
+
+    // Create FFT object
+    #if defined(ARDUINO_ARCH_ESP32)
+    ArduinoFFT<float> FFT = ArduinoFFT<float>(m_vReal, m_vImag, m_config.fftSize, m_config.sampleRate, true);
+    #endif
+
+    // Pre-compute pink noise scaling factors
+    #if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+    if (m_pinkFactors) {
+        constexpr float pinkcenter = 23.66f;  // sqrt(560)
+        float binWidth = (float)m_config.sampleRate / (float)m_config.fftSize;
+        for (uint_fast16_t binInd = 0; binInd < m_config.fftSize; binInd++) {
+            float binFreq = binInd * binWidth + binWidth/2.0f;
+            if (binFreq > (m_config.sampleRate * 0.42f))
+                binFreq = (m_config.sampleRate * 0.42f) - 0.25f * (binFreq - (m_config.sampleRate * 0.42f));
+            m_pinkFactors[binInd] = sqrtf(binFreq) / pinkcenter;
+        }
+        m_pinkFactors[0] *= 0.5f;  // suppress 0-42hz bin
+    }
+    #endif
+
     while (true) {
-        // Read samples from audio source
-        // Apply filters
-        // Process through AGC
-        // Run FFT
-        // Calculate bands
+        delay(1);  // Give IDLE task time and keep watchdog happy
+
+        // Get fresh samples from audio source
+        memset(m_vReal, 0, sizeof(float) * m_config.fftSize);
+
+        uint16_t readOffset = 0;
+        #ifdef FFT_USE_SLIDING_WINDOW
+        if (m_config.useSlidingWindow && haveOldSamples && m_oldSamples) {
+            memcpy(m_vReal, m_oldSamples, sizeof(float) * (m_config.fftSize / 2));
+            usingOldSamples = true;
+            readOffset = m_config.fftSize / 2;
+        } else {
+            usingOldSamples = false;
+        }
+
+        // Read fresh samples
+        do {
+            if (m_audioSource) m_audioSource->getSamples(m_vReal + readOffset, m_config.fftSize / 2);
+            readOffset += m_config.fftSize / 2;
+        } while (readOffset < m_config.fftSize);
+        #else
+        if (m_audioSource) m_audioSource->getSamples(m_vReal, m_config.fftSize);
+        #endif
+
+        xLastWakeTime = xTaskGetTickCount();
+        isFirstRun = !isFirstRun;
+
+        // Apply filters if available
+        float *samplesStart = m_vReal;
+        uint16_t sampleCount = m_config.fftSize;
+        #ifdef FFT_USE_SLIDING_WINDOW
+        if (usingOldSamples) {
+            samplesStart = m_vReal + m_config.fftSize / 2;
+            sampleCount = m_config.fftSize / 2;
+        }
+        #endif
+
+        bool doDCRemoval = true;
+        if (m_audioFilters && m_config.useInputFilter > 0) {
+            // Apply filters through AudioFilters component
+            doDCRemoval = false;
+        }
+
+        // Set imaginary parts to 0
+        memset(m_vImag, 0, sizeof(float) * m_config.fftSize);
+
+        #ifdef FFT_USE_SLIDING_WINDOW
+        if (m_config.useSlidingWindow && m_oldSamples) {
+            memcpy(m_oldSamples, m_vReal + m_config.fftSize / 2, sizeof(float) * (m_config.fftSize / 2));
+            haveOldSamples = true;
+        }
+        #endif
+
+        // Find max sample and count zero crossings
+        float maxSample = 0.0f;
+        uint_fast16_t newZeroCrossingCount = 0;
+        for (int i = 0; i < m_config.fftSize; i++) {
+            if ((m_vReal[i] <= (INT16_MAX - 1024)) && (m_vReal[i] >= (INT16_MIN + 1024))) {
+                #ifdef FFT_USE_SLIDING_WINDOW
+                if (usingOldSamples) {
+                    if ((i >= m_config.fftSize / 2) && (fabsf(m_vReal[i]) > maxSample))
+                        maxSample = fabsf(m_vReal[i]);
+                } else
+                #endif
+                if (fabsf(m_vReal[i]) > maxSample) maxSample = fabsf(m_vReal[i]);
+            }
+
+            if (i < (m_config.fftSize - 1)) {
+                if (__builtin_signbit(m_vReal[i]) != __builtin_signbit(m_vReal[i+1]))
+                    newZeroCrossingCount++;
+            }
+        }
+        m_zeroCrossingCount = (newZeroCrossingCount * 2) / 3;
+
+        // Update volume tracking with max sample
+        if (m_agcController) {
+            // AGC would update based on maxSample
+        }
+
+        float wc = 1.0f;  // Window correction factor
+        bool noiseGateOpen = (m_volumeSmth > 0.25f);
+
+        // Run FFT if noise gate is open
+        if (noiseGateOpen) {
+            // Apply DC removal if needed
+            if (doDCRemoval) {
+                #if defined(ARDUINO_ARCH_ESP32)
+                FFT.dcRemoval();
+                #endif
+            }
+
+            // Apply windowing
+            #if defined(ARDUINO_ARCH_ESP32)
+            switch(m_config.fftWindow) {
+                case 1:
+                    FFT.windowing(FFTWindow::Hann, FFTDirection::Forward);
+                    wc = 0.66415918066f;
+                    break;
+                case 2:
+                    FFT.windowing(FFTWindow::Nuttall, FFTDirection::Forward);
+                    wc = 0.9916873881f;
+                    break;
+                case 3:
+                    FFT.windowing(FFTWindow::Hamming, FFTDirection::Forward);
+                    wc = 0.664159180663f;
+                    break;
+                case 4:
+                    FFT.windowing(FFTWindow::Flat_top, FFTDirection::Forward);
+                    wc = 1.276771793156f;
+                    break;
+                case 5:
+                    FFT.windowing(FFTWindow::Blackman, FFTDirection::Forward);
+                    wc = 0.84762867875f;
+                    break;
+                default:
+                    FFT.windowing(FFTWindow::Blackman_Harris, FFTDirection::Forward);
+                    wc = 1.0f;
+                    break;
+            }
+
+            #ifdef FFT_USE_SLIDING_WINDOW
+            if (usingOldSamples) wc = wc * 1.10f;
+            #endif
+
+            // Compute FFT
+            FFT.compute(FFTDirection::Forward);
+            FFT.complexToMagnitude();
+            m_vReal[0] = 0;  // Eliminate DC offset spike
+
+            // Find major peak
+            float last_majorpeak = m_fftMajorPeak;
+            float last_magnitude = m_fftMagnitude;
+
+            #if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+            // Apply pink noise scaling for peak detection
+            if (m_pinkFactors) {
+                for (uint_fast16_t binInd = 0; binInd < m_config.fftSize; binInd++)
+                    m_vReal[binInd] *= m_pinkFactors[binInd];
+            }
+            #endif
+
+            FFT.majorPeak(m_fftMajorPeak, m_fftMagnitude);
+            m_fftMagnitude *= wc;
+
+            if (m_fftMajorPeak < ((float)m_config.sampleRate / m_config.fftSize)) {
+                m_fftMajorPeak = 1.0f;
+                m_fftMagnitude = 0.0f;
+            }
+            if (m_fftMajorPeak > (0.42f * m_config.sampleRate)) {
+                m_fftMajorPeak = last_majorpeak;
+                m_fftMagnitude = last_magnitude;
+            }
+
+            #if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+            // Undo pink noise scaling
+            if (m_pinkFactors) {
+                for (uint_fast16_t binInd = 0; binInd < m_config.fftSize; binInd++)
+                    m_vReal[binInd] /= m_pinkFactors[binInd];
+
+                // Fix peak magnitude
+                if ((m_fftMajorPeak > 10.0f) && (m_fftMajorPeak < (m_config.sampleRate/2.2f)) && (m_fftMagnitude > 4.0f)) {
+                    float binWidth = (float)m_config.sampleRate / m_config.fftSize;
+                    unsigned peakBin = constrain((int)((m_fftMajorPeak + binWidth/2.0f) / binWidth), 0, m_config.fftSize - 1);
+                    m_fftMagnitude *= fmaxf(1.0f / m_pinkFactors[peakBin], 1.0f);
+                }
+            }
+            #endif
+
+            m_fftMajorPeak = constrain(m_fftMajorPeak, 1.0f, 11025.0f);
+            #endif
+        } else {
+            // Noise gate closed
+            memset(m_vReal, 0, sizeof(float) * m_config.fftSize);
+            m_fftMajorPeak = 1.0f;
+            m_fftMagnitude = 0.001f;
+        }
+
+        // Scale FFT results
+        for (int i = 0; i < m_config.fftSize; i++) {
+            float t = fabsf(m_vReal[i]);
+            m_vReal[i] = t / 16.0f;
+        }
+
+        // Compute frequency bands and post-process
+        computeFrequencyBands(noiseGateOpen, usingOldSamples, wc);
+        postProcessFFT(noiseGateOpen, usingOldSamples);
+
         // Detect peaks
+        detectPeak();
+        autoResetPeak(50);
 
         // Sleep until next cycle
-        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        #ifdef FFT_USE_SLIDING_WINDOW
+        if (!usingOldSamples) {
+            vTaskDelayUntil(&xLastWakeTime, xFrequencyDouble);
+        } else
+        #endif
+        if (isFirstRun) {
+            vTaskDelayUntil(&xLastWakeTime, xFrequencyDouble);
+        } else {
+            vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        }
     }
 }
 #endif

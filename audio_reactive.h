@@ -21,6 +21,7 @@
 #include "agc_controller.h"
 #include "audio_processor.h"
 #include "audio_source.h"
+#include "audio_sync.h"
 
 #ifdef ARDUINO_ARCH_ESP32
 #include <driver/i2s.h>
@@ -166,35 +167,6 @@ static uint16_t zeroCrossingCount = 0;             // Updated by AudioProcessor
 static float soundPressure = 0.0f;                 // Updated by AGCController
 static float agcSensitivity = 128.0f;              // Updated by AGCController
 
-// UDP Sound Sync packet structures (unchanged)
-struct __attribute__ ((packed)) audioSyncPacket {
-  char    header[6];
-  uint8_t pressure[2];
-  float   sampleRaw;
-  float   sampleSmth;
-  uint8_t samplePeak;
-  uint8_t frameCounter;
-  uint8_t fftResult[16];
-  uint16_t zeroCrossingCount;
-  float  FFT_Magnitude;
-  float  FFT_MajorPeak;
-};
-
-struct audioSyncPacket_v1 {
-  char header[6];
-  uint8_t myVals[32];
-  int32_t sampleAgc;
-  int32_t sampleRaw;
-  float sampleAvg;
-  bool samplePeak;
-  uint8_t fftResult[16];
-  double FFT_Magnitude;
-  double FFT_MajorPeak;
-};
-
-#define UDPSOUND_MAX_PACKET 96
-#define AR_UDP_READ_INTERVAL_MS 18
-#define AR_UDP_FLUSH_ALL 255
 
 // Auto-reset peak based on timing
 static unsigned long timeOfPeak = 0;
@@ -215,6 +187,7 @@ class AudioReactive : public Usermod {
     AudioFilters audioFilters;
     AGCController agcController;
     AudioProcessor audioProcessor;
+    AudioSync audioSync;
     AudioSource* audioSource = nullptr;
 
     // Configuration
@@ -277,8 +250,7 @@ class AudioReactive : public Usermod {
     #endif
     bool initDone = false;
 
-    // UDP sound sync
-    WiFiUDP fftUdp;
+    // Timing
     unsigned long lastTime = 0;
     #if defined(WLEDMM_FASTPATH)
     const uint16_t delayMs = 5;
@@ -339,14 +311,6 @@ class AudioReactive : public Usermod {
     void limitGEQDynamics(bool gotNewSample);
     void createAudioSource();
 
-    // UDP sync methods
-    void connectUDPSoundSync();
-    void transmitAudioData();
-    bool receiveAudioData(unsigned maxSamples);
-    bool decodeAudioData(int packetSize, uint8_t *fftBuff);
-    void decodeAudioData_v1(int packetSize, uint8_t *fftBuff);
-    static bool isValidUdpSyncVersion(const char *header);
-    static bool isValidUdpSyncVersion_v1(const char *header);
 
   public:
     // Usermod interface
@@ -388,7 +352,11 @@ inline void AudioReactive::configureAudioLibraries() {
     agcConfig.inputLevel = inputLevel;
     agcConfig.micQuality = micQuality;
     agcConfig.micLevelMethod = micLevelMethod;
-    agcConfig.fastPath = defined(WLEDMM_FASTPATH);
+    #if defined(WLEDMM_FASTPATH)
+    agcConfig.fastPath = true;
+    #else
+    agcConfig.fastPath = false;
+    #endif
     agcController.configure(agcConfig);
     agcController.setEnabled(soundAgc > 0);
 
@@ -399,6 +367,8 @@ inline void AudioReactive::configureAudioLibraries() {
     procConfig.numGEQChannels = NUM_GEQ_CHANNELS;
     procConfig.scalingMode = FFTScalingMode;
     procConfig.pinkIndex = pinkIndex;
+    procConfig.fftWindow = fftWindow;
+    procConfig.freqDist = freqDist;
     #ifdef FFT_USE_SLIDING_WINDOW
     procConfig.useSlidingWindow = (doSlidingFFT > 0);
     #else
@@ -406,7 +376,21 @@ inline void AudioReactive::configureAudioLibraries() {
     #endif
     procConfig.averageByRMS = true;
     procConfig.minCycle = 25;
+    procConfig.inputLevel = inputLevel;
+    procConfig.sampleGain = sampleGain;
+    procConfig.limiterOn = limiterOn;
+    procConfig.decayTime = decayTime;
+    procConfig.useInputFilter = filterConfig.filterMode;
     audioProcessor.configure(procConfig);
+
+    // Configure AudioSync
+    AudioSync::Config syncConfig;
+    syncConfig.port = audioSyncPort;
+    syncConfig.enableTransmit = (audioSyncEnabled & AUDIOSYNC_SEND) != 0;
+    syncConfig.enableReceive = (audioSyncEnabled & AUDIOSYNC_REC) != 0;
+    syncConfig.sequenceCheck = audioSyncSequence;
+    syncConfig.purgeCount = audioSyncPurge;
+    audioSync.configure(syncConfig);
 
     // Link components
     audioProcessor.setAudioFilters(&audioFilters);
@@ -590,16 +574,34 @@ inline void AudioReactive::loop() {
     // Auto-reset peak detection
     autoResetPeak();
 
-    // Handle UDP audio sync
+    // Handle UDP audio sync reception
     if (audioSyncEnabled & AUDIOSYNC_REC) {
-        // Receive mode
-        bool gotNewData = receiveAudioData(audioSyncPurge > 0 ? audioSyncPurge : 1);
+        bool gotNewData = audioSync.receive(audioSyncPurge > 0 ? audioSyncPurge : 1);
+
         if (gotNewData) {
             last_UDPTime = millis();
+
+            // Copy received data to global variables
+            const AudioSync::ReceivedData& rxData = audioSync.getReceivedData();
+            volumeSmth = rxData.volumeSmth;
+            volumeRaw = rxData.volumeRaw;
+            samplePeak = rxData.samplePeak;
+            memcpy(fftResult, rxData.fftResult, NUM_GEQ_CHANNELS);
+            FFT_Magnitude = rxData.fftMagnitude;
+            FFT_MajorPeak = rxData.fftMajorPeak;
+            zeroCrossingCount = rxData.zeroCrossingCount;
+            soundPressure = rxData.soundPressure;
+            agcSensitivity = rxData.agcSensitivity;
+            receivedFormat = rxData.receivedFormat;
+
+            // Apply GEQ dynamics limiting if enabled
+            if (limiterOn) {
+                limitGEQDynamics(true);
+            }
         }
 
         // Check for timeout
-        if ((millis() - last_UDPTime) > AUDIOSYNC_IDLE_MS) {
+        if (audioSync.hasTimedOut(AUDIOSYNC_IDLE_MS)) {
             // Timeout - enable local processing if configured
             if ((audioSyncEnabled & AUDIOSYNC_REC_PLUS) && audioSource) {
                 disableSoundProcessing = false;
@@ -609,32 +611,46 @@ inline void AudioReactive::loop() {
         }
     }
 
-    // Update global variables from library instances
+    // Update global variables from library instances (local processing)
     if (!disableSoundProcessing) {
         updateGlobalVariables();
     }
 
     // Transmit UDP if enabled
-    if (audioSyncEnabled & AUDIOSYNC_SEND) {
+    if ((audioSyncEnabled & AUDIOSYNC_SEND) && !disableSoundProcessing) {
         unsigned long now = millis();
         if (now - lastTime > delayMs) {
-            transmitAudioData();
+            audioSync.transmit(
+                volumeRaw,
+                volumeSmth,
+                samplePeak,
+                fftResult,
+                zeroCrossingCount,
+                FFT_Magnitude,
+                FFT_MajorPeak,
+                soundPressure
+            );
             lastTime = now;
         }
     }
 
     // Apply sample dynamics limiting
-    if (limiterOn) {
-        limitSampleDynamics();
+    if (limiterOn && !disableSoundProcessing) {
+        audioProcessor.limitSampleDynamics(volumeSmth);
     }
 }
 
-// The rest of the methods (UDP sync, config, etc.) remain similar but use library getters
-// For brevity, showing key structure - full implementation would continue here
+// The rest of the methods use library getters
 
 inline void AudioReactive::connected() {
     if (audioSyncEnabled != AUDIOSYNC_NONE) {
-        connectUDPSoundSync();
+        if (audioSync.begin()) {
+            udpSyncConnected = true;
+            DEBUGSR_PRINTLN(F("AR: UDP audio sync connected"));
+        } else {
+            udpSyncConnected = false;
+            DEBUGSR_PRINTLN(F("AR: Failed to connect UDP audio sync"));
+        }
     }
 }
 

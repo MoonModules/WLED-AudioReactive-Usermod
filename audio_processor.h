@@ -50,6 +50,11 @@ public:
         uint8_t freqDist = 0;                  // Frequency distribution mode
         bool averageByRMS = true;              // Use RMS vs linear averaging
         uint8_t minCycle = 25;                 // Minimum ms between FFT cycles
+        uint8_t inputLevel = 128;              // Input level (0-255)
+        uint8_t sampleGain = 60;               // Sample gain (0-255)
+        bool limiterOn = true;                 // Enable limiter/smoothing
+        uint16_t decayTime = 2000;             // Decay time in ms
+        uint8_t useInputFilter = 0;            // 0=none, 1=bandpass, 2=DC blocker
     };
 
     /**
@@ -175,6 +180,18 @@ public:
     void autoResetPeak(uint16_t minShowDelay);
 
     /**
+     * @brief Limit sample dynamics (attack/decay envelope for volume)
+     * @param volumeSmth Reference to volume value to be limited
+     */
+    void limitSampleDynamics(float& volumeSmth);
+
+    /**
+     * @brief Limit GEQ dynamics (attack/decay envelope for frequency channels)
+     * @param gotNewSample True if new FFT samples are available
+     */
+    void limitGEQDynamics(bool gotNewSample);
+
+    /**
      * @brief Get statistics (for debugging)
      */
     struct Stats {
@@ -224,6 +241,11 @@ private:
     // Statistics
     Stats m_stats = {0};
 
+    // Dynamics limiter state
+    unsigned long m_lastDynamicsTime = 0;
+    float m_lastVolumeSmth = 0.0f;
+    unsigned long m_lastGEQDynamicsTime = 0;
+
 #ifdef ARDUINO_ARCH_ESP32
     // FreeRTOS task
     TaskHandle_t m_taskHandle = nullptr;
@@ -235,7 +257,7 @@ private:
     bool allocateBuffers();
     void freeBuffers();
     float fftAddAvg(int from, int to);
-    void computeFrequencyBands(bool noiseGateOpen, bool fastpath);
+    void computeFrequencyBands(bool noiseGateOpen, bool fastpath, float wc);
     void detectPeak();
     void postProcessFFT(bool noiseGateOpen, bool fastpath);
 };
