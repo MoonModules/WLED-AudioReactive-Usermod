@@ -1,4 +1,5 @@
-#pragma once
+#ifndef AUDIO_FILTERS_H
+#define AUDIO_FILTERS_H
 
 /*
    @title     Audio Filters Library

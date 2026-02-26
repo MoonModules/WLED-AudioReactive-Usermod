@@ -1,4 +1,5 @@
-#pragma once
+#ifndef AGC_CONTROLLER_H
+#define AGC_CONTROLLER_H
 
 /*
    @title     AGC Controller Library

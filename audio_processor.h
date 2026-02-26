@@ -1,4 +1,5 @@
-#pragma once
+#ifndef AUDIO_PROCESSOR_H
+#define AUDIO_PROCESSOR_H
 
 /*
    @title     Audio Processor Library
