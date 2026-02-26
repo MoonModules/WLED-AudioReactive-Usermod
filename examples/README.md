@@ -82,30 +82,61 @@ L/R         -> GND (left channel)
 
 ## Getting Started
 
-### 1. Install Libraries
-Copy these files to your project:
-- `audio_filters.h/cpp`
-- `agc_controller.h/cpp`
-- `audio_processor.h/cpp` (for complete_pipeline only)
+### Option 1: Using PlatformIO (Recommended)
 
-### 2. Install Dependencies
-For complete_pipeline.ino, you need ArduinoFFT:
-```
-Platform.IO: lib_deps = https://github.com/kosme/arduinoFFT @ 1.9.2
-Arduino IDE: Install "arduinoFFT" via Library Manager
-```
+**Easiest way to get started!**
 
-### 3. Choose an Example
-- **Just starting?** → example_standalone.ino
-- **Want full features?** → complete_pipeline.ino
+1. **Install PlatformIO**
+   - VSCode: Install PlatformIO IDE extension
+   - Or: `pip install platformio`
 
-### 4. Configure Hardware
-Update pin definitions in the example to match your hardware.
+2. **Open Project**
+   ```bash
+   cd WLED-AudioReactive-Usermod
+   code .  # Or open in VSCode
+   ```
 
-### 5. Upload and Monitor
-- Upload the sketch
-- Open Serial Monitor (115200 baud)
-- Make some noise and watch the output!
+3. **Build and Upload**
+   ```bash
+   # Build for ESP32
+   pio run -e esp32dev
+   
+   # Upload and monitor
+   pio run -e esp32dev -t upload -t monitor
+   ```
+
+4. **Done!** 
+   - Libraries are auto-included
+   - Dependencies auto-installed
+   - No manual configuration needed
+
+See **[QUICKSTART.md](../QUICKSTART.md)** for detailed PlatformIO instructions!
+
+### Option 2: Using Arduino IDE
+
+1. **Install Libraries**
+   Copy these files to your project:
+   - `audio_filters.h/cpp`
+   - `agc_controller.h/cpp`
+   - `audio_processor.h/cpp` (for complete_pipeline only)
+
+2. **Install Dependencies**
+   For complete_pipeline.ino, you need ArduinoFFT:
+   ```
+   Arduino IDE: Install "arduinoFFT" via Library Manager (version 1.9.2)
+   ```
+
+3. **Choose an Example**
+   - **Just starting?** → example_standalone.ino
+   - **Want full features?** → complete_pipeline.ino
+
+4. **Configure Hardware**
+   Update pin definitions in the example to match your hardware.
+
+5. **Upload and Monitor**
+   - Upload the sketch
+   - Open Serial Monitor (115200 baud)
+   - Make some noise and watch the output!
 
 ## Understanding the Output
 
