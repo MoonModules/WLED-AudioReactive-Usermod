@@ -139,7 +139,8 @@ static volatile bool disableSoundProcessing = false;      // if true, sound proc
 static uint8_t audioSyncEnabled = AUDIOSYNC_NONE;         // bit field: bit 0 - send, bit 1 - receive, bit 2 - use local if not receiving
 static bool audioSyncSequence = true;                     // if true, the receiver will drop out-of-sequence packets
 static uint8_t audioSyncPurge = 1;                        // 0: process each packet (don't purge); 1: auto-purge old packets; 2: only process latest received packet (always purge)
-static bool udpSyncConnected = false;         // UDP connection status -> true if connected to multicast group
+static bool audioSyncBroadcast = false;                   // if true, use subnet broadcast for sending instead of multicast; receivers on multicast sockets will still receive broadcast packets
+static bool udpSyncConnected = false;         // UDP connection status -> true if connected to UDP sync
 
 #define NUM_GEQ_CHANNELS 16                                           // number of frequency channels. Don't change !!
 
@@ -1732,9 +1733,18 @@ class AudioReactive : public Usermod {
       transmitData.FFT_Magnitude = my_magnitude;
       transmitData.FFT_MajorPeak = FFT_MajorPeak;
 
-      if (fftUdp.beginMulticastPacket() != 0) { // beginMulticastPacket returns 0 in case of error
-        fftUdp.write(reinterpret_cast<uint8_t *>(&transmitData), sizeof(transmitData));
-        fftUdp.endPacket();
+      if (audioSyncBroadcast) {
+        // Compute subnet broadcast address (e.g. 192.168.1.255 for a /24 network)
+        IPAddress broadcastAddr((uint32_t)WiFi.localIP() | ~(uint32_t)WiFi.subnetMask());
+        if (fftUdp.beginPacket(broadcastAddr, audioSyncPort) != 0) {
+          fftUdp.write(reinterpret_cast<uint8_t *>(&transmitData), sizeof(transmitData));
+          fftUdp.endPacket();
+        }
+      } else {
+        if (fftUdp.beginMulticastPacket() != 0) { // beginMulticastPacket returns 0 in case of error
+          fftUdp.write(reinterpret_cast<uint8_t *>(&transmitData), sizeof(transmitData));
+          fftUdp.endPacket();
+        }
       }
       
       frameCounter++;
@@ -2882,6 +2892,7 @@ class AudioReactive : public Usermod {
       sync[F("mode")] = audioSyncEnabled;
       sync[F("skip_old_data")] = audioSyncPurge;
       sync[F("check_sequence")] = audioSyncSequence;
+      sync[F("broadcast")] = audioSyncBroadcast;
     }
 
 
@@ -2966,6 +2977,7 @@ class AudioReactive : public Usermod {
       configComplete &= getJsonValue(top["sync"][F("mode")], audioSyncEnabled);
       configComplete &= getJsonValue(top["sync"][F("skip_old_data")], audioSyncPurge);
       configComplete &= getJsonValue(top["sync"][F("check_sequence")], audioSyncSequence);
+      configComplete &= getJsonValue(top["sync"][F("broadcast")], audioSyncBroadcast);
 
       // WLEDMM notify user when a reboot is necessary
       #ifdef ARDUINO_ARCH_ESP32
@@ -3201,8 +3213,9 @@ class AudioReactive : public Usermod {
       oappend(SET_F("dd=addDropdown(ux,'sync:check_sequence');"));
       oappend(SET_F("addOption(dd,'Off',0);"));
       oappend(SET_F("addOption(dd,'On',1);"));
-
-      oappend(SET_F("addInfo(ux+':sync:check_sequence',1,'<i>when receiving</i> ☾<br> Sync audio data with other WLEDs');"));  // must append this to the last field of 'sync'
+      oappend(SET_F("addInfo(ux+':sync:check_sequence',1,'<i>when receiving</i>');"));
+      // broadcast: send to subnet broadcast address instead of multicast
+      oappend(SET_F("addInfo(ux+':sync:broadcast',1,'<i>use broadcast instead of multicast</i> ☾<br> Sync audio data with other WLEDs');"));  // must append this to the last field of 'sync'
 
       oappend(SET_F("addInfo(ux+':digitalmic:type',1,'<i>requires reboot!</i>');"));  // 0 is field type, 1 is actual field
 #ifdef ARDUINO_ARCH_ESP32
