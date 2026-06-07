@@ -15,23 +15,20 @@ correctly as a drop-in replacement for the monolithic `audioreactive` usermod.
 
 ### Choosing a WLED fork
 
-Two forks can be used; choose based on what you need to test:
+The required fork for testing this out-of-tree usermod is:
 
-| Fork | Defines | Use when |
+| Fork | Branch | Defines |
 |---|---|---|
-| [`wled/WLED`](https://github.com/wled/WLED) (`main`) | — | Basic compile check; no MoonModules-specific paths |
-| [`MoonModules/WLED-MM`](https://github.com/MoonModules/WLED-MM) (`mdev`) | `_MoonModules_WLED_`, `WLEDMM_FASTPATH`, etc. | Full parity with the original MoonModules source |
+| [`netmindz/WLED-MM`](https://github.com/netmindz/WLED-MM) | `AR-Usermod-out-of-tree` | `_MoonModules_WLED_`, `WLEDMM_FASTPATH`, etc. |
 
-The reference OO code was ported from `MoonModules/WLED-MM main`, so
-**full parity verification requires the `WLED-MM` fork**.
+This branch contains the necessary changes to support loading the audioreactive
+usermod as an out-of-tree library.
 
 Use a **fresh, clean clone** for build testing — do not reuse a checkout that
 has local modifications or a `platformio_override.ini` from another project:
 
 ```sh
-git clone --depth=1 https://github.com/wled/WLED.git /tmp/WLED
-# or, for full MoonModules parity:
-git clone --depth=1 https://github.com/MoonModules/WLED-MM.git /tmp/WLED-MM
+git clone --depth=1 -b AR-Usermod-out-of-tree https://github.com/netmindz/WLED-MM.git /tmp/WLED-MM
 ```
 
 ---
@@ -131,18 +128,18 @@ appear in a full WLED build and should be ignored during integration testing.
 ## Quick-reference commands
 
 ```sh
-# Clone a clean WLED checkout (do not reuse an existing one)
-git clone --depth=1 https://github.com/wled/WLED.git /tmp/WLED
+# Clone a clean WLED-MM checkout on the correct branch (do not reuse an existing one)
+git clone --depth=1 -b AR-Usermod-out-of-tree https://github.com/netmindz/WLED-MM.git /tmp/WLED-MM
 
 # Create the override file (replace the path with the absolute path to this repo)
-cat > /tmp/WLED/platformio_override.ini <<'EOF'
+cat > /tmp/WLED-MM/platformio_override.ini <<'EOF'
 [env:esp32dev_oo]
 extends = env:esp32dev
 custom_usermods = symlink:///absolute/path/to/WLED-AudioReactive-Usermod
 EOF
 
 # Build (zero errors = valid drop-in)
-cd /tmp/WLED
+cd /tmp/WLED-MM
 pio run -e esp32dev_oo 2>&1 | tail -30
 
 # Diff the OO library against the original MoonModules main (for parity checks)
