@@ -2558,7 +2558,11 @@ class AudioReactive : public Usermod {
       // better would be for AudioSource to implement getType()
       if (enabled
           && dmType == 0 && audioPin>=0
+#ifndef WLED_USE_PINMANAGER_V14
           && (buttons[b].type == BTN_TYPE_ANALOG || buttons[b].type == BTN_TYPE_ANALOG_INVERTED)
+#else
+          && (buttonType[b] == BTN_TYPE_ANALOG || buttonType[b] == BTN_TYPE_ANALOG_INVERTED)
+#endif
          ) {
         return true;
       }
