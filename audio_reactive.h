@@ -103,7 +103,8 @@
   #define USER_PRINTLN(x) DEBUGSR_PRINTLN(x)
   #define USER_PRINTF(x...) DEBUGSR_PRINTF(x)
   #define USER_FLUSH()
-  #define oappendi oppend
+ 
+  #define oappendi oappend
 #endif
 
 #if defined(MIC_LOGGER) || defined(FFT_SAMPLING_LOG)
