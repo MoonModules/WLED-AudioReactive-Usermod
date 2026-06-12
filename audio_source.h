@@ -658,8 +658,15 @@ class ES8388Source : public I2SSource {
    This is an I2S sound processing unit that requires initialization over
    I2C before I2S data can be received. 
 */
-class ES8311Source : public I2SSource {
+ class ES8311Source : public I2SSource {
   private:
+    bool ES7210_present = false;  // tracks whether ES7210 co-processor was detected
+
+    bool es7210_present() {
+      Wire.beginTransmission(0x40);
+      return (Wire.endTransmission() == 0);
+    }
+
     // I2C initialization functions for es8311
     void _es8311I2cBegin() {
       Wire.setClock(100000);
@@ -669,13 +676,61 @@ class ES8311Source : public I2SSource {
       #ifndef ES8311_ADDR
         #define ES8311_ADDR 0x18   // default address is... foggy
       #endif
-      Wire.beginTransmission(ES8311_ADDR);
+      if (ES7210_present) {
+        Wire.beginTransmission(0x40);
+      } else {
+        Wire.beginTransmission(ES8311_ADDR);
+      }
       Wire.write((uint8_t)reg);
       Wire.write((uint8_t)val);
       uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
       if (i2cErr != 0) {
         DEBUGSR_PRINTF("AR: ES8311 I2C write failed with error=%d  (addr=0x%X, reg 0x%X, val 0x%X).\n", i2cErr, ES8311_ADDR, reg, val);
       }
+    }
+
+    void es7210_init_22k_32bit() {
+      _es8311I2cBegin();
+
+      // --- 1. RESET ---
+      _es8311I2cWrite(0x00, 0xFF);
+      vTaskDelay(pdMS_TO_TICKS(10));
+      _es8311I2cWrite(0x00, 0x32);
+
+      // --- 2. SLAVE MODE (clocks from ESP32) ---
+      _es8311I2cWrite(0x08, 0x00);  // Slave mode
+      // _es8311I2cWrite(0x06, 0x04);  // DLL off (not needed in slave mode)
+
+      // --- 3. I2S FORMAT ---
+      _es8311I2cWrite(0x09, 0x30);  // Timing control
+      _es8311I2cWrite(0x0A, 0x30);  // Timing control
+      _es8311I2cWrite(0x11, 0x80);  // 32-bit I2S
+      _es8311I2cWrite(0x12, 0x00);  // MIC1/2 on SDOUT1
+
+      // --- 4. HIGH PASS FILTER ---
+      _es8311I2cWrite(0x22, 0x0A);
+      _es8311I2cWrite(0x23, 0x2A);
+
+      // --- 5. ANALOG POWER ---
+      _es8311I2cWrite(0x40, 0xC3);
+      _es8311I2cWrite(0x41, 0x70);  // 0x70 standard bias (0x7F is max)
+
+      // --- 6. GAIN (no ALC) ---
+      _es8311I2cWrite(0x43, 0x18);
+      _es8311I2cWrite(0x44, 0x18);
+      _es8311I2cWrite(0x16, 0x00);  // ALC off
+
+      // --- 7. MIC POWER ---
+      _es8311I2cWrite(0x47, 0x08);  // MIC1 power
+      _es8311I2cWrite(0x48, 0x08);  // MIC2 power
+      _es8311I2cWrite(0x49, 0x00);  // MIC3 OFF
+      _es8311I2cWrite(0x4A, 0x00);  // MIC4 OFF
+      _es8311I2cWrite(0x4B, 0x0F);  // ADC1/2 power
+      _es8311I2cWrite(0x4C, 0x00);  // ADC3/4 OFF
+
+      // --- 8. START ---
+      _es8311I2cWrite(0x00, 0x71);
+      _es8311I2cWrite(0x00, 0x41);
     }
 
     void _es8311InitAdc() {
@@ -685,7 +740,8 @@ class ES8311Source : public I2SSource {
       // If making changes, make sure to completely power off the board - sometimes settings are kept until the board is powered off!
       //
       _es8311I2cBegin(); 
-      _es8311I2cWrite(0x00, 0b00011111); // RESET, default value
+      _es8311I2cWrite(0x00, 0b00011111); // RESET, default value was 0b00011111 new from ESPHome example
+      _es8311I2cWrite(0x00, 0b00000000); // RESET, added this from ESPHome example
       _es8311I2cWrite(0x45, 0b00000000); // GP, default value
       _es8311I2cWrite(0x01, 0b00111010); // CLOCK MANAGER (MCLK enable?)
 
@@ -701,7 +757,9 @@ class ES8311Source : public I2SSource {
       _es8311I2cWrite(0x0B, 0b00000000); // SYSTEM at default
       _es8311I2cWrite(0x0C, 0b00100000); // SYSTEM power up things
       _es8311I2cWrite(0x10, 0b00010011); // SYSTEM internal things
+      _es8311I2cWrite(0x0D, 0b00000001); // ESPHome: Power up analog circuitry
       _es8311I2cWrite(0x11, 0b01111100); // *** SYSTEM undocumented bits, seems to be important
+      _es8311I2cWrite(0x00, 0b11000000); // *** RESET (again - seems important?)
       _es8311I2cWrite(0x01, 0b00111010); // *** CLOCK MANAGER
       _es8311I2cWrite(0x14, 0b00010000); // *** SYSTEM PGA gain
       _es8311I2cWrite(0x0A, 0b00001000); // *** SDP OUT = I2S 32-bit
@@ -714,6 +772,25 @@ class ES8311Source : public I2SSource {
       _es8311I2cWrite(0x18, 0b11001000); // ADC ALC enabled and AutoMute enabled
       _es8311I2cWrite(0x19, 0b11110000); // ADC ALC max (-6dB) and min (-30dB)
       _es8311I2cWrite(0x00, 0b10000000); // *** RESET (This is very required! Thanks to ESPHome for the hint!)
+    }
+
+    void es8311_disable() {
+      Wire.setClock(100000);
+
+      Wire.beginTransmission(0x18);
+      Wire.write(0x00);
+      Wire.write(0x1F);  // Hold in reset
+      Wire.endTransmission();
+
+      Wire.beginTransmission(0x18);
+      Wire.write(0x0D);
+      Wire.write(0x00);  // Power down analog
+      Wire.endTransmission();
+
+      Wire.beginTransmission(0x18);
+      Wire.write(0x0C);
+      Wire.write(0x00);  // Power down digital
+      Wire.endTransmission();
     }
 
   public:
@@ -744,7 +821,14 @@ class ES8311Source : public I2SSource {
 #endif
 
       // First route mclk, then configure ADC over I2C, then configure I2S
-      _es8311InitAdc();
+      if (es7210_present()) {
+        USER_PRINTLN("Overriding ES8311 because an ES7210 is present.");
+        es8311_disable();
+        ES7210_present = true;
+        es7210_init_22k_32bit();
+      } else {
+        _es8311InitAdc();
+      }
       I2SSource::initialize(i2swsPin, i2ssdPin, i2sckPin, mclkPin);
     }
 
