@@ -141,6 +141,7 @@ static volatile bool disableSoundProcessing = false;      // if true, sound proc
 static uint8_t audioSyncEnabled = AUDIOSYNC_NONE;         // bit field: bit 0 - send, bit 1 - receive, bit 2 - use local if not receiving
 static bool audioSyncSequence = true;                     // if true, the receiver will drop out-of-sequence packets
 static uint8_t audioSyncPurge = 1;                        // 0: process each packet (don't purge); 1: auto-purge old packets; 2: only process latest received packet (always purge)
+static bool audioSyncSilenceStop = true;                  // if true, the sender will stop transmitting UDP packets after 30 seconds of continuous silence
 static bool udpSyncConnected = false;         // UDP connection status -> true if connected to multicast group
 
 #define NUM_GEQ_CHANNELS 16                                           // number of frequency channels. Don't change !!
@@ -1239,6 +1240,7 @@ class AudioReactive : public Usermod {
     // used to feed "Info" Page
     unsigned long last_UDPTime = 0;    // time of last valid UDP sound sync data packet
     int receivedFormat = 0;            // last received UDP sound sync format - 0=none, 1=v1 (0.13.x), 2=v2 (0.14.x)
+    unsigned long syncSilenceStart = 0; // millis() when continuous silence began for the sender; 0 = sound is (or was recently) present
     float maxSample5sec = 0.0f;        // max sample (after AGC) in last 5 seconds 
     unsigned long sampleMaxTimer = 0;  // last time maxSample5sec was reset
     #define CYCLE_SAMPLEMAX 3500       // time window for measuring
@@ -2435,6 +2437,11 @@ class AudioReactive : public Usermod {
 
 #ifdef ARDUINO_ARCH_ESP32
       //UDP Microphone Sync  - transmit mode
+      // Track sender silence: reset timer when sound is present, start it when silence begins
+      if (audioSyncEnabled & AUDIOSYNC_SEND) {
+        if (volumeSmth >= 1.0f) syncSilenceStart = 0;           // sound detected - clear silence timer
+        else if (syncSilenceStart == 0) syncSilenceStart = millis(); // just went silent - start timer
+      }
     #if defined(WLEDMM_FASTPATH)
       if ((audioSyncEnabled & AUDIOSYNC_SEND) && (haveNewFFTResult || (millis() - lastTime > 24))) {  // fastpath: send data once results are ready, or each 25ms as fallback (max sampling time is 23ms)
     #else
@@ -2442,7 +2449,10 @@ class AudioReactive : public Usermod {
     #endif
         haveNewFFTResult = false; // reset notification
         // Only run the transmit code IF we're in Transmit mode
-        transmitAudioData();
+        // Sender silence gate: skip transmission when silence has persisted for more than 30 seconds
+        if (!audioSyncSilenceStop || (syncSilenceStart == 0) || (millis() - syncSilenceStart < 30000UL)) {
+          transmitAudioData();
+        }
         lastTime = millis();
       }
 #endif
@@ -2884,6 +2894,7 @@ class AudioReactive : public Usermod {
       sync[F("mode")] = audioSyncEnabled;
       sync[F("skip_old_data")] = audioSyncPurge;
       sync[F("check_sequence")] = audioSyncSequence;
+      sync[F("silence_stop")] = audioSyncSilenceStop;
     }
 
 
@@ -2968,6 +2979,7 @@ class AudioReactive : public Usermod {
       configComplete &= getJsonValue(top["sync"][F("mode")], audioSyncEnabled);
       configComplete &= getJsonValue(top["sync"][F("skip_old_data")], audioSyncPurge);
       configComplete &= getJsonValue(top["sync"][F("check_sequence")], audioSyncSequence);
+      configComplete &= getJsonValue(top["sync"][F("silence_stop")], audioSyncSilenceStop);
 
       // WLEDMM notify user when a reboot is necessary
       #ifdef ARDUINO_ARCH_ESP32
@@ -3205,6 +3217,11 @@ class AudioReactive : public Usermod {
       oappend(SET_F("addOption(dd,'On',1);"));
 
       oappend(SET_F("addInfo(ux+':sync:check_sequence',1,'<i>when receiving</i> ☾<br> Sync audio data with other WLEDs');"));  // must append this to the last field of 'sync'
+      // silence_stop: Sender stops transmitting UDP packets after 30s of continuous silence
+      oappend(SET_F("dd=addDropdown(ux,'sync:silence_stop');"));
+      oappend(SET_F("addOption(dd,'Off',0);"));
+      oappend(SET_F("addOption(dd,'On',1);"));
+      oappend(SET_F("addInfo(ux+':sync:silence_stop',1,'<i>stop sending after 30s silence</i> ☾<br> Sync audio data with other WLEDs');"));  // must append this to the last field of 'sync'
 
       oappend(SET_F("addInfo(ux+':digitalmic:type',1,'<i>requires reboot!</i>');"));  // 0 is field type, 1 is actual field
 #ifdef ARDUINO_ARCH_ESP32
