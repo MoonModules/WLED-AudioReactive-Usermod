@@ -1120,11 +1120,6 @@ class AudioReactive : public Usermod {
   private:
 #ifdef ARDUINO_ARCH_ESP32
 
-// HUB75 workaround - audio receive only
-#ifdef WLED_ENABLE_HUB75MATRIX
-#undef SR_DMTYPE
-#define SR_DMTYPE 254  // "network receive only"
-#endif
     #ifndef AUDIOPIN
     int8_t audioPin = -1;
     #else
