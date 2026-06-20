@@ -49,6 +49,14 @@ constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not c
   #endif
 #endif
 
+// PinManager API Compatibility
+// By default, this usermod uses WLED V16+ PinManager API (PinManager:: static class methods)
+// Define WLED_USE_PINMANAGER_V14 to use the older V14 API (pinManager instance methods)
+// The method signatures are the same, but V14 uses lowercase 'pinManager' instance
+// while V16+ uses uppercase 'PinManager::' static class methods
+// Example: -D WLED_USE_PINMANAGER_V14
+// #define WLED_USE_PINMANAGER_V14  // Uncomment for V14 compatibility mode
+
 /* ToDo: remove. ES7243 is controlled via compiler defines
    Until this configuration is moved to the webinterface
 */
@@ -188,6 +196,35 @@ class AudioSource {
     I2S_datatype newSampleBuffer[I2S_SAMPLES_MAX+4] = { 0 }; // global buffer for i2s_read
 };
 
+
+// Helper functions for PinManager API compatibility
+#ifdef WLED_USE_PINMANAGER_V14
+  // V14 API compatibility - uses pinManager instance methods (lowercase)
+  inline bool ar_allocatePin(int8_t pin, bool output, PinOwner owner) {
+    return pinManager.allocatePin(pin, output, owner);
+  }
+  inline void ar_deallocatePin(int8_t pin, PinOwner owner) {
+    pinManager.deallocatePin(pin, owner);
+  }
+  inline bool ar_joinWire(int8_t sda, int8_t scl) {
+    return pinManager.joinWire(sda, scl);
+  }
+#else
+  // V16+ API (default) - uses PinManager static class methods (uppercase)
+  inline bool ar_allocatePin(int8_t pin, bool output, PinOwner owner) {
+    return PinManager::allocatePin(pin, output, owner);
+  }
+  inline void ar_deallocatePin(int8_t pin, PinOwner owner) {
+    PinManager::deallocatePin(pin, owner);
+  }
+  inline bool ar_joinWire(int8_t sda, int8_t scl) {
+    USER_PRINTLN("AR: WARNING PinManager::joinWire() unsupported - returning false.");
+    return false;
+    // return PinManager::joinWire(sda, scl); // TODO: implement PinManager::joinWire()
+  }
+#endif
+
+
 /* Basic I2S microphone source
    All functions are marked virtual, so derived classes can replace them
    WARNING: i2sMaster = false is experimental, and most likely will not work
@@ -241,17 +278,17 @@ class I2SSource : public AudioSource {
     virtual void initialize(int8_t i2swsPin = I2S_PIN_NO_CHANGE, int8_t i2ssdPin = I2S_PIN_NO_CHANGE, int8_t i2sckPin = I2S_PIN_NO_CHANGE, int8_t mclkPin = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("I2SSource:: initialize().");
       if (i2swsPin != I2S_PIN_NO_CHANGE && i2ssdPin != I2S_PIN_NO_CHANGE) {
-        if (!PinManager::allocatePin(i2swsPin, true, PinOwner::UM_Audioreactive) ||
-            !PinManager::allocatePin(i2ssdPin, false, PinOwner::UM_Audioreactive)) { // #206
-          ERRORSR_PRINTF("\nAR: Failed to allocate I2S pins: ws=%d, sd=%d\n",  i2swsPin, i2ssdPin); 
+        if (!ar_allocatePin(i2swsPin, true, PinOwner::UM_Audioreactive) ||
+            !ar_allocatePin(i2ssdPin, false, PinOwner::UM_Audioreactive)) { // #206
+          ERRORSR_PRINTF("\nAR: Failed to allocate I2S pins: ws=%d, sd=%d\n",  i2swsPin, i2ssdPin);
           return;
         }
       }
 
       // i2ssckPin needs special treatment, since it might be unused on PDM mics
       if (i2sckPin != I2S_PIN_NO_CHANGE) {
-        if (!PinManager::allocatePin(i2sckPin, true, PinOwner::UM_Audioreactive)) {
-          ERRORSR_PRINTF("\nAR: Failed to allocate I2S pins: sck=%d\n",  i2sckPin); 
+        if (!ar_allocatePin(i2sckPin, true, PinOwner::UM_Audioreactive)) {
+          ERRORSR_PRINTF("\nAR: Failed to allocate I2S pins: sck=%d\n",  i2sckPin);
           return;
         }
       } else {
@@ -318,8 +355,8 @@ class I2SSource : public AudioSource {
       // Reserve the master clock pin if provided
       _mclkPin = mclkPin;
       if (mclkPin != I2S_PIN_NO_CHANGE) {
-        if(!PinManager::allocatePin(mclkPin, true, PinOwner::UM_Audioreactive)) { 
-          ERRORSR_PRINTF("\nAR: Failed to allocate I2S pin: MCLK=%d\n",  mclkPin); 
+        if(!ar_allocatePin(mclkPin, true, PinOwner::UM_Audioreactive)) {
+          ERRORSR_PRINTF("\nAR: Failed to allocate I2S pin: MCLK=%d\n",  mclkPin);
           return;
         } else
         _routeMclk(mclkPin);
@@ -380,11 +417,11 @@ class I2SSource : public AudioSource {
         DEBUGSR_PRINTF("Failed to uninstall i2s driver: %d\n", err);
         return;
       }
-      if (_pinConfig.ws_io_num   != I2S_PIN_NO_CHANGE) PinManager::deallocatePin(_pinConfig.ws_io_num,   PinOwner::UM_Audioreactive);
-      if (_pinConfig.data_in_num != I2S_PIN_NO_CHANGE) PinManager::deallocatePin(_pinConfig.data_in_num, PinOwner::UM_Audioreactive);
-      if (_pinConfig.bck_io_num  != I2S_PIN_NO_CHANGE) PinManager::deallocatePin(_pinConfig.bck_io_num,  PinOwner::UM_Audioreactive);
+      if (_pinConfig.ws_io_num   != I2S_PIN_NO_CHANGE) ar_deallocatePin(_pinConfig.ws_io_num,   PinOwner::UM_Audioreactive);
+      if (_pinConfig.data_in_num != I2S_PIN_NO_CHANGE) ar_deallocatePin(_pinConfig.data_in_num, PinOwner::UM_Audioreactive);
+      if (_pinConfig.bck_io_num  != I2S_PIN_NO_CHANGE) ar_deallocatePin(_pinConfig.bck_io_num,  PinOwner::UM_Audioreactive);
       // Release the master clock pin
-      if (_mclkPin != I2S_PIN_NO_CHANGE) PinManager::deallocatePin(_mclkPin, PinOwner::UM_Audioreactive);
+      if (_mclkPin != I2S_PIN_NO_CHANGE) ar_deallocatePin(_mclkPin, PinOwner::UM_Audioreactive);
     }
 
     virtual void getSamples(float *buffer, uint16_t num_samples) {
@@ -505,8 +542,8 @@ public:
         return;
       }
 #ifdef WLEDMM
-      if (!PinManager::joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
-        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
+      if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
+        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
       }
 #endif
@@ -637,8 +674,8 @@ class ES8388Source : public I2SSource {
         return;
       }
 #ifdef WLEDMM
-      if (!PinManager::joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
-        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
+      if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
+        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
       }
 #endif
@@ -814,8 +851,8 @@ class ES8388Source : public I2SSource {
         return;
       }
 #ifdef WLEDMM
-      if (!PinManager::joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
-        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
+      if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
+        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
       }
 #endif
@@ -919,8 +956,8 @@ class WM8978Source : public I2SSource {
         return;
       }
 #ifdef WLEDMM
-      if (!PinManager::joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
-        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
+      if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
+        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
       }
 #endif
@@ -1023,8 +1060,8 @@ class AC101Source : public I2SSource {
         return;
       }
 #ifdef WLEDMM
-      if (!PinManager::joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
-        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
+      if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
+        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
       }
 #endif
@@ -1082,7 +1119,7 @@ class I2SAdcSource : public I2SSource {
     void initialize(int8_t audioPin, int8_t = I2S_PIN_NO_CHANGE, int8_t = I2S_PIN_NO_CHANGE, int8_t = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("I2SAdcSource:: initialize().");
       _myADCchannel = 0x0F;
-      if(!PinManager::allocatePin(audioPin, false, PinOwner::UM_Audioreactive)) {
+      if(!ar_allocatePin(audioPin, false, PinOwner::UM_Audioreactive)) {
          ERRORSR_PRINTF("failed to allocate GPIO for audio analog input: %d\n", audioPin);
         return;
       }
@@ -1210,7 +1247,7 @@ class I2SAdcSource : public I2SSource {
     }
 
     void deinitialize() {
-      PinManager::deallocatePin(_audioPin, PinOwner::UM_Audioreactive);
+      ar_deallocatePin(_audioPin, PinOwner::UM_Audioreactive);
       _initialized = false;
       _myADCchannel = 0x0F;
       
