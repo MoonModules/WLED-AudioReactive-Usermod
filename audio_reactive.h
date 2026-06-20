@@ -12,7 +12,7 @@
 
 
 #include "wled.h"
-
+#include "esp_dsp.h"
 #ifdef ARDUINO_ARCH_ESP32
 
 #include <driver/i2s.h>
@@ -400,8 +400,11 @@ constexpr uint16_t samplesFFT_2 = 256;          // meaningful part of FFT result
 #define LOG_256  5.54517744f                            // log(256)
 
 // These are the input and output vectors.  Input vectors receive computed results from FFT.
-static float* vReal = nullptr;       // FFT sample inputs / freq output -  these are our raw result bins
-static float* vImag = nullptr;       // imaginary parts
+__attribute__((aligned(16))) static float vReal[samplesFFT] = {0.0f};       // FFT sample inputs / freq output -  these are our raw result bins
+__attribute__((aligned(16))) static float vImag[samplesFFT] = {0.0f};       // imaginary parts
+#ifdef UM_AUDIOREACTIVE_USE_NEW_FFT
+static float windowWeighingFactors[samplesFFT] = {0.0f};
+#endif
 
 #ifdef FFT_MAJORPEAK_HUMAN_EAR
 static float* pinkFactors = nullptr;                        // "pink noise" correction factors
@@ -498,6 +501,7 @@ static void runDCBlocker(uint_fast16_t numSamples, float *sampleBuffer) {
 //
 void FFTcode(void * parameter)
 {
+
   #ifdef SR_DEBUG
     USER_FLUSH();
     USER_PRINT("AR: "); USER_PRINT(pcTaskGetTaskName(NULL));
@@ -549,6 +553,22 @@ void FFTcode(void * parameter)
   }
   pinkFactors[0] *= 0.5;  // suppress 0-42hz bin
   #endif
+
+  esp_err_t myerr = dsps_fft4r_init_fc32(NULL, samplesFFT >> 1);
+  if (myerr  != ESP_OK) {
+      USER_PRINTF("Not possible to initialize FFT4R. Error = %i", myerr);
+      return;
+  }
+  __attribute__((aligned(16))) float window[samplesFFT];
+  dsps_wind_blackman_harris_f32(window, samplesFFT);
+
+  float coeffs_lpf[5];
+  float w_lpf[5] = {0, 0};
+  myerr = dsps_biquad_gen_lpf_f32(coeffs_lpf, 0.5, 100);
+  if (myerr  != ESP_OK) {
+      DEBUG_PRINTF("Operation error = %i\n", myerr);
+      return;
+  }
 
   TickType_t xLastWakeTime = xTaskGetTickCount();
   for(;;) {
@@ -637,9 +657,7 @@ void FFTcode(void * parameter)
 
 #if defined(WLEDMM_FASTPATH) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && defined(ARDUINO_ARCH_ESP32)
     // experimental - be nice to LED update task (trying to avoid flickering) - dual core only
-#if FFTTASK_PRIORITY > 1
-    if (strip.isServicing()) delay(1);
-#endif
+    // if (strip.isServicing()) delay(2);
 #endif
 
     // normal mode: filter everything
@@ -699,6 +717,7 @@ void FFTcode(void * parameter)
         if (__builtin_signbit(vReal[i]) != __builtin_signbit(vReal[i+1]))  // test sign bit: sign changed -> zero crossing
             newZeroCrossingCount++;
       }
+      vReal[i] *= window[i];
     }
     newZeroCrossingCount = (newZeroCrossingCount*2)/3; // reduce value so it typically stays below 256
     zeroCrossingCount = newZeroCrossingCount; // update only once, to avoid that effects pick up an intermediate value
@@ -731,40 +750,46 @@ void FFTcode(void * parameter)
     if (fabsf(volumeSmth) > 0.25f) { // noise gate open
       if ((skipSecondFFT == false) || (isFirstRun == true)) {
         // run FFT (takes 2-3ms on ESP32, ~12ms on ESP32-S2, ~30ms on -C3)
-        if (doDCRemoval) FFT.dcRemoval();                                            // remove DC offset
-        switch(fftWindow) {                                                          // apply FFT window
-          case 1:
-            FFT.windowing(FFTWindow::Hann, FFTDirection::Forward);  // recommended for 50% overlap
-            wc = 0.66415918066;     // 1.8554726898 * 2.0
-          break;
-          case 2:
-            FFT.windowing( FFTWindow::Nuttall, FFTDirection::Forward);
-            wc = 0.9916873881f;     // 2.8163172034 * 2.0
-          break;
-          case 5:
-            FFT.windowing( FFTWindow::Blackman, FFTDirection::Forward);
-            wc = 0.84762867875f;     // 2.3673474360 * 2.0
-          break;
-          case 3:
-            FFT.windowing( FFTWindow::Hamming, FFTDirection::Forward);
-            wc = 0.664159180663f;   // 1.8549343278 * 2.0
-          break;
-          case 4:
-            FFT.windowing( FFTWindow::Flat_top, FFTDirection::Forward);        // Weigh data using "Flat Top" function - better amplitude preservation, low frequency accuracy
-            wc = 1.276771793156f;   // 3.5659039231 * 2.0
-          break;
-          case 0: // falls through
-          default:
-            FFT.windowing(FFTWindow::Blackman_Harris, FFTDirection::Forward);  // Weigh data using "Blackman - Harris" window - sharp peaks due to excellent sideband rejection
-            wc = 1.0f;              // 2.7929062517 * 2.0
-        }
-        #ifdef FFT_USE_SLIDING_WINDOW
-        if (usingOldSamples) wc = wc * 1.10f; // compensate for loss caused by averaging
-        #endif
+        #if 1 // defined(UM_AUDIOREACTIVE_USE_ESPDSP)
+          dsps_biquad_f32(vReal, vImag, samplesFFT, coeffs_lpf, w_lpf);
+          memcpy(vReal, vImag, samplesFFT);
+          dsps_fft4r_fc32(vReal,samplesFFT >> 1);
+          dsps_bit_rev4r_fc32(vReal,samplesFFT >> 1);
+          dsps_cplx2real_fc32(vReal,samplesFFT >> 1);
+          vReal[1] = vReal[0];
+          // int x=0;
+          // for (int i=0; i<samplesFFT;i+=2) {
+          //   vReal[x] = vReal[i];
+          //   x++;
+          // }
+          // for (int i = 0 ; i < samplesFFT/2 ; i++) {
+          //   vReal[i] = ((vReal[i * 2 + 0] * vReal[i * 2 + 0] + vReal[i * 2 + 1] * vReal[i * 2 + 1])/samplesFFT);
+          //   // vReal[i] = 10 * log10f((vReal[i * 2 + 0] * vReal[i * 2 + 0] + vReal[i * 2 + 1] * vReal[i * 2 + 1]) / samplesFFT);
+          // }
+        #elif defined(UM_AUDIOREACTIVE_USE_NEW_FFT)
+        // #ifdef UM_AUDIOREACTIVE_USE_NEW_FFT
+          FFT.dcRemoval();                                            // remove DC offset
+          #if !defined(FFT_PREFER_EXACT_PEAKS)
+            FFT.windowing( FFTWindow::Flat_top, FFTDirection::Forward);        // Weigh data using "Flat Top" function - better amplitude accuracy
+          #else
+            FFT.windowing(FFTWindow::Blackman_Harris, FFTDirection::Forward);  // Weigh data using "Blackman- Harris" window - sharp peaks due to excellent sideband rejection
+          #endif
+          FFT.compute( FFTDirection::Forward );                       // Compute FFT
+          FFT.complexToMagnitude();                                   // Compute magnitudes
+          vReal[0] = 0;   // The remaining DC offset on the signal produces a strong spike on position 0 that should be eliminated to avoid issues.
+        #else
+          FFT.DCRemoval(); // let FFT lib remove DC component, so we don't need to care about this in getSamples()
 
-        FFT.compute( FFTDirection::Forward );                       // Compute FFT
-        FFT.complexToMagnitude();                                   // Compute magnitudes
-        vReal[0] = 0;   // The remaining DC offset on the signal produces a strong spike on position 0 that should be eliminated to avoid issues.
+          //FFT.Windowing( FFT_WIN_TYP_HAMMING, FFT_FORWARD );        // Weigh data - standard Hamming window
+          //FFT.Windowing( FFT_WIN_TYP_BLACKMAN, FFT_FORWARD );       // Blackman window - better side freq rejection
+          #if !defined(FFT_PREFER_EXACT_PEAKS)
+            FFT.Windowing( FFT_WIN_TYP_FLT_TOP, FFT_FORWARD );        // Flat Top Window - better amplitude accuracy
+          #else
+            FFT.Windowing( FFT_WIN_TYP_BLACKMAN_HARRIS, FFT_FORWARD );// Blackman-Harris - excellent sideband rejection
+          #endif
+          FFT.Compute( FFT_FORWARD );                             // Compute FFT
+          FFT.ComplexToMagnitude();                               // Compute magnitudes
+        #endif
 
         float last_majorpeak = FFT_MajorPeak;
         float last_magnitude = FFT_Magnitude;
@@ -775,9 +800,8 @@ void FFTcode(void * parameter)
           vReal[binInd] *= pinkFactors[binInd];
         #endif
 
-        #if defined(FFT_LIB_REV) && FFT_LIB_REV > 0x19
-          // arduinoFFT 2.x has a slightly different API
-          FFT.majorPeak(&FFT_MajorPeak, &FFT_Magnitude);
+        #ifdef UM_AUDIOREACTIVE_USE_NEW_FFT
+        // FFT.majorPeak(FFT_MajorPeak, FFT_Magnitude);                // let the effects know which freq was most dominant
         #else
           FFT.majorPeak(FFT_MajorPeak, FFT_Magnitude);                // let the effects know which freq was most dominant
         #endif
@@ -821,53 +845,100 @@ void FFTcode(void * parameter)
       // mapping of FFT result bins to frequency channels
       //if (fabsf(sampleAvg) > 0.25f) { // noise gate open
       if (fabsf(volumeSmth) > 0.25f) { // noise gate open
-        //WLEDMM: different distributions
-        if (freqDist == 0) {
-          /* new mapping, optimized for 22050 Hz by softhack007 --- update: removed overlap */
-                                                         // bins frequency  range
-          if (useInputFilter==1) {
-            // skip frequencies below 100hz
-            fftCalc[ 0] = wc * 0.8f * fftAddAvg(3,3);
-            fftCalc[ 1] = wc * 0.9f * fftAddAvg(4,4);
-            fftCalc[ 2] = wc * fftAddAvg(5,5);
-            fftCalc[ 3] = wc * fftAddAvg(6,6);
-            // don't use the last bins from 206 to 255. 
-            fftCalc[15] = wc * fftAddAvg(165,205) * 0.75f;   // 40 7106 - 8828 high             -- with some damping
-          } else {
-            fftCalc[ 0] = wc * fftAddAvg(1,1);               // 1    43 - 86   sub-bass
-            fftCalc[ 1] = wc * fftAddAvg(2,2);               // 1    86 - 129  bass
-            fftCalc[ 2] = wc * fftAddAvg(3,4);               // 2   129 - 216  bass
-            fftCalc[ 3] = wc * fftAddAvg(5,6);               // 2   216 - 301  bass + midrange
-            // don't use the last bins from 216 to 255. They are usually contaminated by aliasing (aka noise) 
-            fftCalc[15] = wc * fftAddAvg(165,215) * 0.70f;   // 50 7106 - 9259 high             -- with some damping
-          }
-          fftCalc[ 4] = wc * fftAddAvg(7,9);                 // 3   301 - 430  midrange
-          fftCalc[ 5] = wc * fftAddAvg(10,12);               // 3   430 - 560  midrange
-          fftCalc[ 6] = wc * fftAddAvg(13,18);               // 5   560 - 818  midrange
-          fftCalc[ 7] = wc * fftAddAvg(19,25);               // 7   818 - 1120 midrange -- 1Khz should always be the center !
-          fftCalc[ 8] = wc * fftAddAvg(26,32);               // 7  1120 - 1421 midrange
-          fftCalc[ 9] = wc * fftAddAvg(33,43);               // 9  1421 - 1895 midrange
-          fftCalc[10] = wc * fftAddAvg(44,55);               // 12 1895 - 2412 midrange + high mid
-          fftCalc[11] = wc * fftAddAvg(56,69);               // 14 2412 - 3015 high mid
-          fftCalc[12] = wc * fftAddAvg(70,85);               // 16 3015 - 3704 high mid
-          fftCalc[13] = wc * fftAddAvg(86,103);              // 18 3704 - 4479 high mid
-          fftCalc[14] = wc * fftAddAvg(104,164) * 0.88f;     // 61 4479 - 7106 high mid + high  -- with slight damping
-      } else if (freqDist == 1) { //WLEDMM: Rightshift: note ewowi: frequencies in comments are not correct
-        if (useInputFilter==1) {
-          // skip frequencies below 100hz
-          fftCalc[ 0] = wc * 0.8f * fftAddAvg(1,1);
-          fftCalc[ 1] = wc * 0.9f * fftAddAvg(2,2);
-          fftCalc[ 2] = wc * fftAddAvg(3,3);
-          fftCalc[ 3] = wc * fftAddAvg(4,4);
-          // don't use the last bins from 206 to 255. 
-          fftCalc[15] = wc * fftAddAvg(165,205) * 0.75f;   // 40 7106 - 8828 high             -- with some damping
-        } else {
-          fftCalc[ 0] = wc * fftAddAvg(1,1);               // 1    43 - 86   sub-bass
-          fftCalc[ 1] = wc * fftAddAvg(2,2);               // 1    86 - 129  bass
-          fftCalc[ 2] = wc * fftAddAvg(3,3);               // 2   129 - 216  bass
-          fftCalc[ 3] = wc * fftAddAvg(4,4);               // 2   216 - 301  bass + midrange
-          // don't use the last bins from 216 to 255. They are usually contaminated by aliasing (aka noise) 
-          fftCalc[15] = wc * fftAddAvg(165,215) * 0.70f;   // 50 7106 - 9259 high             -- with some damping
+#if 0
+    /* This FFT post processing is a DIY endeavour. What we really need is someone with sound engineering expertise to do a great job here AND most importantly, that the animations look GREAT as a result.
+    *
+    * Andrew's updated mapping of 256 bins down to the 16 result bins with Sample Freq = 10240, samplesFFT = 512 and some overlap.
+    * Based on testing, the lowest/Start frequency is 60 Hz (with bin 3) and a highest/End frequency of 5120 Hz in bin 255.
+    * Now, Take the 60Hz and multiply by 1.320367784 to get the next frequency and so on until the end. Then determine the bins.
+    * End frequency = Start frequency * multiplier ^ 16
+    * Multiplier = (End frequency/ Start frequency) ^ 1/16
+    * Multiplier = 1.320367784
+    */                                    //  Range
+      fftCalc[ 0] = fftAddAvg(2,4);       // 60 - 100
+      fftCalc[ 1] = fftAddAvg(4,5);       // 80 - 120
+      fftCalc[ 2] = fftAddAvg(5,7);       // 100 - 160
+      fftCalc[ 3] = fftAddAvg(7,9);       // 140 - 200
+      fftCalc[ 4] = fftAddAvg(9,12);      // 180 - 260
+      fftCalc[ 5] = fftAddAvg(12,16);     // 240 - 340
+      fftCalc[ 6] = fftAddAvg(16,21);     // 320 - 440
+      fftCalc[ 7] = fftAddAvg(21,29);     // 420 - 600
+      fftCalc[ 8] = fftAddAvg(29,37);     // 580 - 760
+      fftCalc[ 9] = fftAddAvg(37,48);     // 740 - 980
+      fftCalc[10] = fftAddAvg(48,64);     // 960 - 1300
+      fftCalc[11] = fftAddAvg(64,84);     // 1280 - 1700
+      fftCalc[12] = fftAddAvg(84,111);    // 1680 - 2240
+      fftCalc[13] = fftAddAvg(111,147);   // 2220 - 2960
+      fftCalc[14] = fftAddAvg(147,194);   // 2940 - 3900
+      fftCalc[15] = fftAddAvg(194,250);   // 3880 - 5000 // avoid the last 5 bins, which are usually inaccurate
+#else
+  //WLEDMM: different distributions
+  if (freqDist == 0) {
+      /* new mapping, optimized for 22050 Hz by softhack007 --- update: removed overlap */
+                                                    // bins frequency  range
+      if (useInputFilter==1) {
+        // skip frequencies below 100hz
+        fftCalc[ 0] = 0.8f * fftAddAvg(3,3);
+        fftCalc[ 1] = 0.9f * fftAddAvg(4,4);
+        fftCalc[ 2] = fftAddAvg(5,5);
+        fftCalc[ 3] = fftAddAvg(6,6);
+        // don't use the last bins from 206 to 255. 
+        fftCalc[15] = fftAddAvg(165,205) * 0.75f;   // 40 7106 - 8828 high             -- with some damping
+      } else {
+        fftCalc[ 0] = fftAddAvg(1,1);               // 1    43 - 86   sub-bass
+        fftCalc[ 1] = fftAddAvg(2,2);               // 1    86 - 129  bass
+        fftCalc[ 2] = fftAddAvg(3,4);               // 2   129 - 216  bass
+        fftCalc[ 3] = fftAddAvg(5,6);               // 2   216 - 301  bass + midrange
+        // don't use the last bins from 216 to 255. They are usually contaminated by aliasing (aka noise) 
+        fftCalc[15] = fftAddAvg(165,215); //  * 0.70f;   // 50 7106 - 9259 high             -- with some damping
+      }
+      fftCalc[ 4] = fftAddAvg(7,9);                // 3   301 - 430  midrange
+      fftCalc[ 5] = fftAddAvg(10,12);               // 3   430 - 560  midrange
+      fftCalc[ 6] = fftAddAvg(13,18);               // 5   560 - 818  midrange
+      fftCalc[ 7] = fftAddAvg(19,25);               // 7   818 - 1120 midrange -- 1Khz should always be the center !
+      fftCalc[ 8] = fftAddAvg(26,32);               // 7  1120 - 1421 midrange
+      fftCalc[ 9] = fftAddAvg(33,43);               // 9  1421 - 1895 midrange
+      fftCalc[10] = fftAddAvg(44,55);               // 12 1895 - 2412 midrange + high mid
+      fftCalc[11] = fftAddAvg(56,69);               // 14 2412 - 3015 high mid
+      fftCalc[12] = fftAddAvg(70,85);               // 16 3015 - 3704 high mid
+      fftCalc[13] = fftAddAvg(86,103);              // 18 3704 - 4479 high mid
+      fftCalc[14] = fftAddAvg(104,164); //  * 0.88f;     // 61 4479 - 7106 high mid + high  -- with slight damping
+  }
+  else if (freqDist == 1) { //WLEDMM: Rightshift: note ewowi: frequencies in comments are not correct
+      if (useInputFilter==1) {
+        // skip frequencies below 100hz
+        fftCalc[ 0] = 0.8f * fftAddAvg(1,1);
+        fftCalc[ 1] = 0.9f * fftAddAvg(2,2);
+        fftCalc[ 2] = fftAddAvg(3,3);
+        fftCalc[ 3] = fftAddAvg(4,4);
+        // don't use the last bins from 206 to 255. 
+        fftCalc[15] = fftAddAvg(165,205) * 0.75f;   // 40 7106 - 8828 high             -- with some damping
+      } else {
+        fftCalc[ 0] = fftAddAvg(1,1);               // 1    43 - 86   sub-bass
+        fftCalc[ 1] = fftAddAvg(2,2);               // 1    86 - 129  bass
+        fftCalc[ 2] = fftAddAvg(3,3);               // 2   129 - 216  bass
+        fftCalc[ 3] = fftAddAvg(4,4);               // 2   216 - 301  bass + midrange
+        // don't use the last bins from 216 to 255. They are usually contaminated by aliasing (aka noise) 
+        fftCalc[15] = fftAddAvg(165,215) * 0.70f;   // 50 7106 - 9259 high             -- with some damping
+      }
+      fftCalc[ 4] = fftAddAvg(5,6);                // 3   301 - 430  midrange
+      fftCalc[ 5] = fftAddAvg(7,8);               // 3   430 - 560  midrange
+      fftCalc[ 6] = fftAddAvg(9,10);               // 5   560 - 818  midrange
+      fftCalc[ 7] = fftAddAvg(11,13);               // 7   818 - 1120 midrange -- 1Khz should always be the center !
+      fftCalc[ 8] = fftAddAvg(14,18);               // 7  1120 - 1421 midrange
+      fftCalc[ 9] = fftAddAvg(19,25);               // 9  1421 - 1895 midrange
+      fftCalc[10] = fftAddAvg(26,36);               // 12 1895 - 2412 midrange + high mid
+      fftCalc[11] = fftAddAvg(37,45);               // 14 2412 - 3015 high mid
+      fftCalc[12] = fftAddAvg(46,66);               // 16 3015 - 3704 high mid
+      fftCalc[13] = fftAddAvg(67,97);              // 18 3704 - 4479 high mid
+      fftCalc[14] = fftAddAvg(98,164) * 0.88f;     // 61 4479 - 7106 high mid + high  -- with slight damping
+  }
+#endif
+      } else {  // noise gate closed - just decay old values
+        isFirstRun = false;
+        for (int i=0; i < NUM_GEQ_CHANNELS; i++) {
+          fftCalc[i] *= 0.85f;  // decay to zero
+          if (fftCalc[i] < 4.0f) fftCalc[i] = 0.0f;
         }
         fftCalc[ 4] = wc * fftAddAvg(5,6);                 // 3   301 - 430  midrange
         fftCalc[ 5] = wc * fftAddAvg(7,8);                 // 3   430 - 560  midrange
