@@ -1,0 +1,40 @@
+name: Build WLED-MM
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout WLED-MM
+        uses: actions/checkout@v4
+        with:
+          repository: MoonModules/WLED-MM
+          path: WLED-MM
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Override AR_lib_deps to use this commit
+        run: |
+          cat > WLED-MM/platformio_override.ini << EOF
+          [common_mm]
+          AR_lib_deps =
+            https://github.com/${{ github.repository }}.git#${{ github.sha }}
+            https://github.com/softhack007/arduinoFFT.git#56c867c
+          EOF
+
+      - name: Build
+        run: |
+          cd WLED-MM
+          pio run -e esp32_4MB_V4_S
