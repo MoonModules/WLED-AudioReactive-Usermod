@@ -18,7 +18,7 @@
 #include <driver/adc.h>
 #include <soc/i2s_reg.h>  // needed for SPH0465 timing workaround (classic ESP32)
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ARCH_RISCV) 
 #include <driver/adc_deprecated.h>
 #include <driver/adc_types_deprecated.h>
 #endif
@@ -38,14 +38,14 @@ constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not c
 
 // see https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/chip-series-comparison.html#related-documents
 // and https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/i2s.html#overview-of-all-modes
-#if defined(CONFIG_IDF_TARGET_ESP32C2) || defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2) || defined(ESP8266) || defined(ESP8265)
+#if !defined(CONFIG_SOC_CPU_HAS_FPU) || defined(ESP8266) || defined(ESP8265)
   // there are two things in these MCUs that could lead to problems with audio processing:
   // * no floating point hardware (FPU) support - FFT uses float calculations. If done in software, a strong slow-down can be expected (between 8x and 20x)
   // * single core, so FFT task might slow down other things like LED updates
   #if !defined(SOC_I2S_NUM) || (SOC_I2S_NUM < 1)
-  #error This audio reactive usermod does not support ESP32-C2 or ESP32-C3.
+  #error This audio reactive usermod does not support devices without FPUs and I2S.
   #else
-  #warning This audio reactive usermod does not support ESP32-C2 and ESP32-C3.
+  #warning This audio reactive usermod does not officially support devices without FPUs.
   #endif
 #endif
 
@@ -277,12 +277,16 @@ class I2SSource : public AudioSource {
 
     virtual void initialize(int8_t i2swsPin = I2S_PIN_NO_CHANGE, int8_t i2ssdPin = I2S_PIN_NO_CHANGE, int8_t i2sckPin = I2S_PIN_NO_CHANGE, int8_t mclkPin = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("I2SSource:: initialize().");
-      if (i2swsPin != I2S_PIN_NO_CHANGE && i2ssdPin != I2S_PIN_NO_CHANGE) {
-        if (!ar_allocatePin(i2swsPin, true, PinOwner::UM_Audioreactive) ||
-            !ar_allocatePin(i2ssdPin, false, PinOwner::UM_Audioreactive)) { // #206
-          ERRORSR_PRINTF("\nAR: Failed to allocate I2S pins: ws=%d, sd=%d\n",  i2swsPin, i2ssdPin);
-          return;
-        }
+
+      if (i2swsPin == I2S_PIN_NO_CHANGE || i2ssdPin == I2S_PIN_NO_CHANGE || i2sckPin == I2S_PIN_NO_CHANGE) {
+        USER_PRINTLN("I2SSource:: Pins not configured, skipping initialization.");
+        return;
+      }
+
+      if (!pinManager.allocatePin(i2swsPin, true, PinOwner::UM_Audioreactive) ||
+        !pinManager.allocatePin(i2ssdPin, false, PinOwner::UM_Audioreactive)) {
+        ERRORSR_PRINTF("\nAR: Failed to allocate I2S pins: ws=%d, sd=%d\n", i2swsPin, i2ssdPin);
+        return;
       }
 
       // i2ssckPin needs special treatment, since it might be unused on PDM mics
@@ -297,7 +301,7 @@ class I2SSource : public AudioSource {
           #warning this MCU does not support PDM microphones
           #endif
         #endif
-        #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+        #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32P4)
         // This is an I2S PDM microphone, these microphones only use a clock and
         // data line, to make it simpler to debug, use the WS pin as CLK and SD pin as DATA
         // example from espressif: https://github.com/espressif/esp-idf/blob/release/v4.4/examples/peripherals/i2s/i2s_audio_recorder_sdcard/main/i2s_recorder_main.c
@@ -697,13 +701,10 @@ class ES8388Source : public I2SSource {
 */
  class ES8311Source : public I2SSource {
   private:
-    bool ES7210_present = false;  // tracks whether ES7210 co-processor was detected
-
     bool es7210_present() {
       Wire.beginTransmission(0x40);
       return (Wire.endTransmission() == 0);
     }
-
     // I2C initialization functions for es8311
     void _es8311I2cBegin() {
       Wire.setClock(100000);
@@ -711,7 +712,7 @@ class ES8388Source : public I2SSource {
 
     void _es8311I2cWrite(uint8_t reg, uint8_t val) {
       #ifndef ES8311_ADDR
-        #define ES8311_ADDR 0x18   // default address is... foggy
+        #define ES8311_ADDR 0x18
       #endif
       if (ES7210_present) {
         Wire.beginTransmission(0x40);
@@ -830,9 +831,9 @@ class ES8388Source : public I2SSource {
       Wire.endTransmission();
     }
 
-  public:
-    ES8311Source(SRate_t sampleRate, int blockSize, float sampleScale = 1.0f, bool i2sMaster=true) :
-      I2SSource(sampleRate, blockSize, sampleScale, i2sMaster) {
+public:
+  ES8311Source(SRate_t sampleRate, int blockSize, float sampleScale = 1.0f, bool i2sMaster = true) :
+    I2SSource(sampleRate, blockSize, sampleScale, i2sMaster) {
       _config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
     };
 
@@ -857,9 +858,8 @@ class ES8388Source : public I2SSource {
       }
 #endif
 
-      // First route mclk, then configure ADC over I2C, then configure I2S
       if (es7210_present()) {
-        USER_PRINTLN("Overriding ES8311 because an ES7210 is present.");
+        USER_PRINTLN("Overriding ES8311 becasue an ES7210 is present.");
         es8311_disable();
         ES7210_present = true;
         es7210_init_22k_32bit();
@@ -1076,13 +1076,14 @@ class AC101Source : public I2SSource {
 
 };
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-#if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
-  #warning this MCU does not support analog sound input
-#endif
-#endif
+// YEAH YEAH WE KNOW BUT NOBODY WILL
+// #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
+// #if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
+//   #warning this MCU does not support analog sound input
+// #endif
+// #endif
 
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ARCH_RISCV)
 // ADC over I2S is only available in "classic" ESP32
 
 /* ADC over I2S Microphone
@@ -1291,12 +1292,12 @@ class SPH0654 : public I2SSource {
     void initialize(int8_t i2swsPin, int8_t i2ssdPin, int8_t i2sckPin, int8_t = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("SPH0654:: initialize();");
       I2SSource::initialize(i2swsPin, i2ssdPin, i2sckPin);
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+      #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ARCH_RISCV)
 // these registers are only existing in "classic" ESP32
       REG_SET_BIT(I2S_TIMING_REG(AR_I2S_PORT), BIT(9));
       REG_SET_BIT(I2S_CONF_REG(AR_I2S_PORT), I2S_RX_MSB_SHIFT);
 #else
-      #warning FIX ME! Please.
+      // #warning FIX ME! Please. // never gonna fix this so we can stop talking about it.
 #endif
     }
 };
