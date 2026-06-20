@@ -12,13 +12,13 @@
 
 
 #ifdef ARDUINO_ARCH_ESP32
-#include <Wire.h>
+// #include <Wire.h>
 #include "wled.h"
 #include <driver/i2s.h>
 #include <driver/adc.h>
 #include <soc/i2s_reg.h>  // needed for SPH0465 timing workaround (classic ESP32)
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <driver/adc_deprecated.h>
 #include <driver/adc_types_deprecated.h>
 #endif
@@ -498,17 +498,18 @@ class ES7243 : public I2SSource {
   private:
     // I2C initialization functions for ES7243
     void _es7243I2cBegin() {
-      Wire.setClock(100000);
+      // Wire.setClock(100000);
     }
 
     void _es7243I2cWrite(uint8_t reg, uint8_t val) {
       #ifndef ES7243_ADDR
         #define ES7243_ADDR 0x13   // default address
       #endif
-      Wire.beginTransmission(ES7243_ADDR);
-      Wire.write((uint8_t)reg);
-      Wire.write((uint8_t)val);
-      uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
+      uint8_t i2cErr;
+      // Wire.beginTransmission(ES7243_ADDR);
+      // Wire.write((uint8_t)reg);
+      // Wire.write((uint8_t)val);
+      // uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
       if (i2cErr != 0) {
         DEBUGSR_PRINTF("AR: ES7243 I2C write failed with error=%d  (addr=0x%X, reg 0x%X, val 0x%X).\n", i2cErr, ES7243_ADDR, reg, val);
       }
@@ -565,17 +566,18 @@ class ES8388Source : public I2SSource {
   private:
     // I2C initialization functions for ES8388
     void _es8388I2cBegin() {
-      Wire.setClock(100000);
+      // Wire.setClock(100000);
     }
 
     void _es8388I2cWrite(uint8_t reg, uint8_t val) {
       #ifndef ES8388_ADDR
         #define ES8388_ADDR 0x10   // default address
       #endif
-      Wire.beginTransmission(ES8388_ADDR);
-      Wire.write((uint8_t)reg);
-      Wire.write((uint8_t)val);
-      uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
+      uint8_t i2cErr;
+      // Wire.beginTransmission(ES8388_ADDR);
+      // Wire.write((uint8_t)reg);
+      // Wire.write((uint8_t)val);
+      // uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
       if (i2cErr != 0) {
         DEBUGSR_PRINTF("AR: ES8388 I2C write failed with error=%d  (addr=0x%X, reg 0x%X, val 0x%X).\n", i2cErr, ES8388_ADDR, reg, val);
       }
@@ -660,7 +662,7 @@ class ES8388Source : public I2SSource {
     };
 
     void initialize(int8_t i2swsPin, int8_t i2ssdPin, int8_t i2sckPin, int8_t mclkPin) {
-      DEBUGSR_PRINTLN("ES8388Source:: initialize();");
+      DEBUG_PRINTLN("ES8388Source:: initialize();");
 
       // if ((i2sckPin < 0) || (mclkPin < 0)) { // WLEDMM not sure if this check is needed here, too
       //    ERRORSR_PRINTF("\nAR: invalid I2S ES8388 pin: SCK=%d, MCLK=%d\n", i2sckPin, mclkPin); 
@@ -669,16 +671,14 @@ class ES8388Source : public I2SSource {
       // BUG: "use global I2C pins" are valid as -1, and -1 is seen as invalid here.
       // Workaround: Set I2C pins here, which will also set them globally.
       // Bug also exists in ES7243.
-       if ((i2c_sda < 0) || (i2c_scl < 0)) {  // check that global I2C pins are not "undefined"
-        ERRORSR_PRINTF("\nAR: invalid ES8388 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
-        return;
-      }
-#ifdef WLEDMM
-      if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
-        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
-        return;
-      }
-#endif
+      //  if ((i2c_sda < 0) || (i2c_scl < 0)) {  // check that global I2C pins are not "undefined"
+      //    DEBUG_PRINTF("\nAR: invalid ES8388 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
+      //   return;
+      // }
+      // if (!pinManager.joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
+      //   DEBUG_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
+      //   return;
+      // }
 
       // First route mclk, then configure ADC over I2C, then configure I2S
       _es8388InitAdc();
@@ -706,23 +706,57 @@ class ES8388Source : public I2SSource {
 
     // I2C initialization functions for es8311
     void _es8311I2cBegin() {
-      Wire.setClock(100000);
+      #ifndef ES8311_ADDR
+      #define ES8311_ADDR 0x18
+      #endif
+      USER_PRINTF("Setting up ES8211 at address (0x%X)...\n", ES8311_ADDR);
+
+      i2c_master_bus_handle_t global_bus_handle = NULL;
+
+      // 1. GET THE GLOBAL BUS HANDLE
+      // We assume the bus was created on GLOBAL_I2C_PORT (e.g., I2C_NUM_1) in setup()
+      esp_err_t get_err = i2c_master_get_bus_handle(GLOBAL_I2C_PORT, &global_bus_handle);
+
+      if (get_err != ESP_OK || global_bus_handle == NULL) {
+        USER_PRINTF("AR: Failed to get global I2C bus handle! Has it been created? %s\n", esp_err_to_name(get_err));
+        return;
+      }
+
+      // 2. CONFIGURE THIS DEVICE
+      i2c_device_config_t audio_dev_cfg = {};
+      audio_dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+      audio_dev_cfg.device_address = ES8311_ADDR;
+      audio_dev_cfg.scl_speed_hz = 100000; // 100kHz is safe
+
+      // 3. ADD THIS DEVICE TO THE BUS
+      esp_err_t add_err = i2c_master_bus_add_device(global_bus_handle, &audio_dev_cfg, &audio_handle);
+
+      if (add_err != ESP_OK) {
+        USER_PRINTF("AR: Failed to add ES8311 to bus: %s\n", esp_err_to_name(add_err));
+        audio_handle = NULL; // Keep it NULL so we retry next time
+        return;
+      }
+      USER_PRINTLN("AR: ES8311 added to I2C bus successfully.");
     }
 
     void _es8311I2cWrite(uint8_t reg, uint8_t val) {
-      #ifndef ES8311_ADDR
-        #define ES8311_ADDR 0x18   // default address is... foggy
-      #endif
-      if (ES7210_present) {
-        Wire.beginTransmission(0x40);
-      } else {
-        Wire.beginTransmission(ES8311_ADDR);
-      }
-      Wire.write((uint8_t)reg);
-      Wire.write((uint8_t)val);
-      uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
-      if (i2cErr != 0) {
-        DEBUGSR_PRINTF("AR: ES8311 I2C write failed with error=%d  (addr=0x%X, reg 0x%X, val 0x%X).\n", i2cErr, ES8311_ADDR, reg, val);
+
+      // Now we're guaranteed to have a valid handle (or we returned)
+      // Create a 2-byte buffer: [register_address, value]
+      uint8_t cmd_buf[2] = { reg, val };
+
+      // Call the NEW ESP-IDF I2C master transmit function
+      esp_err_t err = i2c_master_transmit(
+        audio_handle,     // The specific device handle we just got
+        cmd_buf,          // Pointer to the data buffer
+        sizeof(cmd_buf),  // Number of bytes to write (2)
+        100               // Timeout in *milliseconds*
+      );
+
+      // Check for errors
+      if (err != ESP_OK) {
+        // Use WLED-style logging
+        USER_PRINTF("AR: ES8311 I2C transmit failed: %s (reg 0x%X, val 0x%X).\n", esp_err_to_name(err), reg, val);
       }
     }
 
@@ -811,25 +845,6 @@ class ES8388Source : public I2SSource {
       _es8311I2cWrite(0x00, 0b10000000); // *** RESET (This is very required! Thanks to ESPHome for the hint!)
     }
 
-    void es8311_disable() {
-      Wire.setClock(100000);
-
-      Wire.beginTransmission(0x18);
-      Wire.write(0x00);
-      Wire.write(0x1F);  // Hold in reset
-      Wire.endTransmission();
-
-      Wire.beginTransmission(0x18);
-      Wire.write(0x0D);
-      Wire.write(0x00);  // Power down analog
-      Wire.endTransmission();
-
-      Wire.beginTransmission(0x18);
-      Wire.write(0x0C);
-      Wire.write(0x00);  // Power down digital
-      Wire.endTransmission();
-    }
-
   public:
     ES8311Source(SRate_t sampleRate, int blockSize, float sampleScale = 1.0f, bool i2sMaster=true) :
       I2SSource(sampleRate, blockSize, sampleScale, i2sMaster) {
@@ -837,7 +852,7 @@ class ES8388Source : public I2SSource {
     };
 
     void initialize(int8_t i2swsPin, int8_t i2ssdPin, int8_t i2sckPin, int8_t mclkPin) {
-      DEBUGSR_PRINTLN("es8311Source:: initialize();");
+      DEBUG_PRINTLN("es8311Source:: initialize();");
 
       // if ((i2sckPin < 0) || (mclkPin < 0)) { // WLEDMM not sure if this check is needed here, too
       //    ERRORSR_PRINTF("\nAR: invalid I2S es8311 pin: SCK=%d, MCLK=%d\n", i2sckPin, mclkPin); 
@@ -847,25 +862,19 @@ class ES8388Source : public I2SSource {
       // Workaround: Set I2C pins here, which will also set them globally.
       // Bug also exists in ES7243.
        if ((i2c_sda < 0) || (i2c_scl < 0)) {  // check that global I2C pins are not "undefined"
-        ERRORSR_PRINTF("\nAR: invalid es8311 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
+        DEBUG_PRINTF("\nAR: invalid es8311 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
-      if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
-        ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
+      if (!pinManager.joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
+        DEBUG_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
 #endif
 
       // First route mclk, then configure ADC over I2C, then configure I2S
-      if (es7210_present()) {
-        USER_PRINTLN("Overriding ES8311 because an ES7210 is present.");
-        es8311_disable();
-        ES7210_present = true;
-        es7210_init_22k_32bit();
-      } else {
-        _es8311InitAdc();
-      }
+      _es8311InitAdc();
+      delay(100); // wait a bit after init // TROYHACKS FIXME? Why do we do this twice?
+      _es8311InitAdc();
       I2SSource::initialize(i2swsPin, i2ssdPin, i2sckPin, mclkPin);
     }
 
@@ -879,7 +888,7 @@ class WM8978Source : public I2SSource {
   private:
     // I2C initialization functions for WM8978
     void _wm8978I2cBegin() {
-      Wire.setClock(400000);
+      // Wire.setClock(400000);
     }
 
     void _wm8978I2cWrite(uint8_t reg, uint16_t val) {
@@ -889,9 +898,10 @@ class WM8978Source : public I2SSource {
       char buf[2];
       buf[0] = (reg << 1) | ((val >> 8) & 0X01);
       buf[1] = val & 0XFF;
-      Wire.beginTransmission(WM8978_ADDR);
-      Wire.write((const uint8_t*)buf, 2);
-      uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
+      uint8_t i2cErr;
+      // Wire.beginTransmission(WM8978_ADDR);
+      // Wire.write((const uint8_t*)buf, 2);
+      // uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
       if (i2cErr != 0) {
         DEBUGSR_PRINTF("AR: WM8978 I2C write failed with error=%d  (addr=0x%X, reg 0x%X, val 0x%X).\n", i2cErr, WM8978_ADDR, reg, val);
       }
@@ -976,20 +986,21 @@ class AC101Source : public I2SSource {
   private:
     // I2C initialization functions for WM8978
     void _ac101I2cBegin() {
-      Wire.setClock(400000);
+      // Wire.setClock(400000);
     }
 
     void _ac101I2cWrite(uint8_t reg_addr, uint16_t val) {
       #ifndef AC101_ADDR
         #define AC101_ADDR 0x1A
       #endif
+      uint8_t i2cErr;
       char send_buff[3];
       send_buff[0] = reg_addr;
       send_buff[1] = uint8_t((val >> 8) & 0xff);
       send_buff[2] = uint8_t(val & 0xff);
-      Wire.beginTransmission(AC101_ADDR);
-      Wire.write((const uint8_t*)send_buff, 3);
-      uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
+      // Wire.beginTransmission(AC101_ADDR);
+      // Wire.write((const uint8_t*)send_buff, 3);
+      // uint8_t i2cErr = Wire.endTransmission();  // i2cErr == 0 means OK
       if (i2cErr != 0) {
         DEBUGSR_PRINTF("AR: AC101 I2C write failed with error=%d  (addr=0x%X, reg 0x%X, val 0x%X).\n", i2cErr, AC101_ADDR, reg_addr, val);
       }
@@ -1076,13 +1087,14 @@ class AC101Source : public I2SSource {
 
 };
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-#if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
-  #warning this MCU does not support analog sound input
-#endif
-#endif
+// YEAH YEAH WE KNOW BUT NOBODY WILL
+// #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
+// #if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
+//   #warning this MCU does not support analog sound input
+// #endif
+// #endif
 
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32P4)
 // ADC over I2S is only available in "classic" ESP32
 
 /* ADC over I2S Microphone
@@ -1291,12 +1303,12 @@ class SPH0654 : public I2SSource {
     void initialize(int8_t i2swsPin, int8_t i2ssdPin, int8_t i2sckPin, int8_t = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("SPH0654:: initialize();");
       I2SSource::initialize(i2swsPin, i2ssdPin, i2sckPin);
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32P4)
 // these registers are only existing in "classic" ESP32
       REG_SET_BIT(I2S_TIMING_REG(AR_I2S_PORT), BIT(9));
       REG_SET_BIT(I2S_CONF_REG(AR_I2S_PORT), I2S_RX_MSB_SHIFT);
 #else
-      #warning FIX ME! Please.
+      // #warning FIX ME! Please. // never gonna fix this so we can stop talking about it.
 #endif
     }
 };
