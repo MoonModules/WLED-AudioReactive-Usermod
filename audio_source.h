@@ -18,7 +18,7 @@
 #include <driver/adc.h>
 #include <soc/i2s_reg.h>  // needed for SPH0465 timing workaround (classic ESP32)
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <driver/adc_deprecated.h>
 #include <driver/adc_types_deprecated.h>
 #endif
@@ -711,7 +711,7 @@ class ES8388Source : public I2SSource {
 
     void _es8311I2cWrite(uint8_t reg, uint8_t val) {
       #ifndef ES8311_ADDR
-        #define ES8311_ADDR 0x18   // default address is... foggy
+        #define ES8311_ADDR 0x18
       #endif
       if (ES7210_present) {
         Wire.beginTransmission(0x40);
@@ -811,25 +811,6 @@ class ES8388Source : public I2SSource {
       _es8311I2cWrite(0x00, 0b10000000); // *** RESET (This is very required! Thanks to ESPHome for the hint!)
     }
 
-    void es8311_disable() {
-      Wire.setClock(100000);
-
-      Wire.beginTransmission(0x18);
-      Wire.write(0x00);
-      Wire.write(0x1F);  // Hold in reset
-      Wire.endTransmission();
-
-      Wire.beginTransmission(0x18);
-      Wire.write(0x0D);
-      Wire.write(0x00);  // Power down analog
-      Wire.endTransmission();
-
-      Wire.beginTransmission(0x18);
-      Wire.write(0x0C);
-      Wire.write(0x00);  // Power down digital
-      Wire.endTransmission();
-    }
-
   public:
     ES8311Source(SRate_t sampleRate, int blockSize, float sampleScale = 1.0f, bool i2sMaster=true) :
       I2SSource(sampleRate, blockSize, sampleScale, i2sMaster) {
@@ -858,14 +839,9 @@ class ES8388Source : public I2SSource {
 #endif
 
       // First route mclk, then configure ADC over I2C, then configure I2S
-      if (es7210_present()) {
-        USER_PRINTLN("Overriding ES8311 because an ES7210 is present.");
-        es8311_disable();
-        ES7210_present = true;
-        es7210_init_22k_32bit();
-      } else {
-        _es8311InitAdc();
-      }
+      _es8311InitAdc();
+      delay(100); // wait a bit after init
+      _es8311InitAdc();
       I2SSource::initialize(i2swsPin, i2ssdPin, i2sckPin, mclkPin);
     }
 
@@ -1076,13 +1052,14 @@ class AC101Source : public I2SSource {
 
 };
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-#if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
-  #warning this MCU does not support analog sound input
-#endif
-#endif
+// YEAH YEAH WE KNOW BUT NOBODY WILL
+// #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
+// #if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
+//   #warning this MCU does not support analog sound input
+// #endif
+// #endif
 
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32P4)
 // ADC over I2S is only available in "classic" ESP32
 
 /* ADC over I2S Microphone
@@ -1291,12 +1268,12 @@ class SPH0654 : public I2SSource {
     void initialize(int8_t i2swsPin, int8_t i2ssdPin, int8_t i2sckPin, int8_t = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("SPH0654:: initialize();");
       I2SSource::initialize(i2swsPin, i2ssdPin, i2sckPin);
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32P4)
 // these registers are only existing in "classic" ESP32
       REG_SET_BIT(I2S_TIMING_REG(AR_I2S_PORT), BIT(9));
       REG_SET_BIT(I2S_CONF_REG(AR_I2S_PORT), I2S_RX_MSB_SHIFT);
 #else
-      #warning FIX ME! Please.
+      // #warning FIX ME! Please. // never gonna fix this so we can stop talking about it.
 #endif
     }
 };
