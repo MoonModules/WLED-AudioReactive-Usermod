@@ -145,6 +145,7 @@ static bool audioSyncBroadcast = false;                   // if true, use subnet
 static bool udpSyncConnected = false;         // UDP connection status -> true if connected to UDP sync
 
 #define NUM_GEQ_CHANNELS 16                                           // number of frequency channels. Don't change !!
+#define MAX_PALETTES 3                                                // number of audioreactive palettes provided by this usermod
 
 // audioreactive variables
 #ifdef ARDUINO_ARCH_ESP32
@@ -1200,6 +1201,8 @@ class AudioReactive : public Usermod {
     bool     enabled = false;
   #endif
     bool     initDone = false;
+    bool     addPalettes = false;
+    int8_t   palettes = 0;
 
     // variables  for UDP sound sync
     WiFiUDP fftUdp;               // UDP object for sound sync (from WiFi UDP, not Async UDP!)
@@ -1249,8 +1252,16 @@ class AudioReactive : public Usermod {
     static const char _digitalmic[];
     static const char UDP_SYNC_HEADER[];
     static const char UDP_SYNC_HEADER_v1[];
+    static const char _addPalettes[];
+    static const char _palName0[];
+    static const char _palName1[];
+    static const char _palName2[];
 
     // private methods
+    void removeAudioPalettes(void);
+    void createAudioPalettes(void);
+    CRGB getCRGBForBand(int x, int pal);
+    void fillAudioPalettes(void);
 
     ////////////////////
     // Debug support  //
@@ -2145,6 +2156,7 @@ class AudioReactive : public Usermod {
       receivedFormat = 0;
       delay(100);
       if (enabled) connectUDPSoundSync();
+      if (enabled && addPalettes) createAudioPalettes();
       initDone = true;
       DEBUGSR_PRINT(F("AR: init done, enabled = "));
       DEBUGSR_PRINTLN(enabled ? F("true.") : F("false."));
@@ -2451,6 +2463,8 @@ class AudioReactive : public Usermod {
         lastTime = millis();
       }
 #endif
+
+      fillAudioPalettes();
     }
 
 #if defined(_MoonModules_WLED_) && defined(WLEDMM_FASTPATH)
@@ -2795,12 +2809,24 @@ class AudioReactive : public Usermod {
         if (usermod[FPSTR(_enabled)].is<bool>()) {
           enabled = usermod[FPSTR(_enabled)].as<bool>();
           if (prevEnabled != enabled) onUpdateBegin(!enabled);
+          if (addPalettes) {
+            // add/remove custom/audioreactive palettes
+            if (prevEnabled && !enabled) removeAudioPalettes();
+            if (!prevEnabled && enabled) createAudioPalettes();
+          }
         }
 #ifdef ARDUINO_ARCH_ESP32
         if (usermod[FPSTR(_inputLvl)].is<int>()) {
           inputLevel = min(255,max(0,usermod[FPSTR(_inputLvl)].as<int>()));
         }
 #endif
+      }
+    }
+
+    void onStateChange(uint8_t callMode) {
+      if (initDone && enabled && addPalettes && palettes==0) {
+        // if palettes were removed during JSON call re-add them
+        createAudioPalettes();
       }
     }
 
@@ -2843,6 +2869,7 @@ class AudioReactive : public Usermod {
     void addToConfig(JsonObject& root) override {
       JsonObject top = root.createNestedObject(FPSTR(_name));
       top[FPSTR(_enabled)] = enabled;
+      top[FPSTR(_addPalettes)] = addPalettes;
 #ifdef ARDUINO_ARCH_ESP32
     #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
       JsonObject amic = top.createNestedObject(FPSTR(_analogmic));
@@ -2915,6 +2942,7 @@ class AudioReactive : public Usermod {
     bool readFromConfig(JsonObject& root) override {
       JsonObject top = root[FPSTR(_name)];
       bool configComplete = !top.isNull();
+      bool oldAddPalettes = addPalettes;
 
 #ifdef ARDUINO_ARCH_ESP32
       // remember previous values
@@ -2927,6 +2955,7 @@ class AudioReactive : public Usermod {
 #endif
 
       configComplete &= getJsonValue(top[FPSTR(_enabled)], enabled);
+      configComplete &= getJsonValue(top[FPSTR(_addPalettes)], addPalettes);
 #ifdef ARDUINO_ARCH_ESP32
     #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
       configComplete &= getJsonValue(top[FPSTR(_analogmic)]["pin"], audioPin);
@@ -2979,6 +3008,14 @@ class AudioReactive : public Usermod {
       configComplete &= getJsonValue(top["sync"][F("skip_old_data")], audioSyncPurge);
       configComplete &= getJsonValue(top["sync"][F("check_sequence")], audioSyncSequence);
       configComplete &= getJsonValue(top["sync"][F("broadcast")], audioSyncBroadcast);
+
+#ifdef ARDUINO_ARCH_ESP32
+      if (initDone) {
+        // add/remove custom/audioreactive palettes
+        if ((oldAddPalettes && !addPalettes) || (oldAddPalettes && !enabled)) removeAudioPalettes();
+        if ((addPalettes && !oldAddPalettes && enabled) || (addPalettes && !oldEnabled && enabled)) createAudioPalettes();
+      }
+#endif
 
       // WLEDMM notify user when a reboot is necessary
       #ifdef ARDUINO_ARCH_ESP32
@@ -3284,6 +3321,90 @@ class AudioReactive : public Usermod {
     }
 };
 
+void AudioReactive::removeAudioPalettes(void) {
+  DEBUG_PRINTLN(F("Removing audio palettes."));
+  palettes -= (int8_t)removeUsermodPalettes(_name);
+  if (palettes < 0) palettes = 0; // safeguard
+}
+
+void AudioReactive::createAudioPalettes(void) {
+  if (palettes) return;
+  DEBUG_PRINTLN(F("Adding audio palettes."));
+  static const char *const palNames[MAX_PALETTES] PROGMEM = {_palName0, _palName1, _palName2};
+  for (int i=0; i<MAX_PALETTES; i++) {
+    if (usermodPalettes.size() < WLED_MAX_USERMOD_PALETTES) {
+      usermodPalettes.push_back({CRGBPalette16(CRGB(BLACK)), _name, (uint8_t)i, palNames[i]}); // start black, filled each loop by fillAudioPalettes()
+      palettes++;
+      DEBUG_PRINTLN(palettes);
+    } else break;
+  }
+}
+
+// credit @netmindz ar palette, adapted for usermod @blazoncek
+CRGB AudioReactive::getCRGBForBand(int x, int pal) {
+  CRGB value;
+  CHSV hsv;
+  int b;
+  switch (pal) {
+    case 2:
+      b = map(x, 0, 255, 0, NUM_GEQ_CHANNELS/2); // convert palette position to lower half of freq band
+      hsv = CHSV(fftResult[b], 255, x);
+      value = hsv;  // convert to R,G,B
+      break;
+    case 1:
+      b = map(x, 1, 255, 0, 10); // convert palette position to lower half of freq band
+      hsv = CHSV(fftResult[b], 255, map(fftResult[b], 0, 255, 30, 255));  // pick hue
+      value = hsv;  // convert to R,G,B
+      break;
+    default:
+      if (x == 1) {
+        value = CRGB(fftResult[10]/2, fftResult[4]/2, fftResult[0]/2);
+      } else if(x == 255) {
+        value = CRGB(fftResult[10]/2, fftResult[0]/2, fftResult[4]/2);
+      } else {
+        value = CRGB(fftResult[0]/2, fftResult[4]/2, fftResult[10]/2);
+      }
+      break;
+  }
+  return value;
+}
+
+void AudioReactive::fillAudioPalettes() {
+  if (!palettes) return;
+  // Scan by name pointer identity to find the palettes we added, palIndex = 0/1/2... selects the getCRGBForBand variant, matching how the entries were created.
+  for (auto &ump : usermodPalettes) {
+    if (ump.name != _name) continue;
+    const int pal = ump.palIndex;
+    uint8_t tcp[16];  // Needs to be 4 times however many colors are being used.
+                      // 3 colors = 12, 4 colors = 16, etc.
+
+    tcp[0] = 0;  // anchor of first color - must be zero
+    tcp[1] = 0;
+    tcp[2] = 0;
+    tcp[3] = 0;
+
+    CRGB rgb = getCRGBForBand(1, pal);
+    tcp[4] = 1;  // anchor of first color
+    tcp[5] = rgb.r;
+    tcp[6] = rgb.g;
+    tcp[7] = rgb.b;
+
+    rgb = getCRGBForBand(128, pal);
+    tcp[8] = 128;
+    tcp[9] = rgb.r;
+    tcp[10] = rgb.g;
+    tcp[11] = rgb.b;
+
+    rgb = getCRGBForBand(255, pal);
+    tcp[12] = 255;  // anchor of last color - must be 255
+    tcp[13] = rgb.r;
+    tcp[14] = rgb.g;
+    tcp[15] = rgb.b;
+
+    ump.palette.loadDynamicGradientPalette(tcp);
+  }
+}
+
 // strings to reduce flash memory usage (used more than twice)
 const char AudioReactive::_name[]       PROGMEM = "AudioReactive";
 const char AudioReactive::_enabled[]    PROGMEM = "enabled";
@@ -3294,3 +3415,7 @@ const char AudioReactive::_analogmic[]  PROGMEM = "analogmic";
 const char AudioReactive::_digitalmic[] PROGMEM = "digitalmic";
 const char AudioReactive::UDP_SYNC_HEADER[]    PROGMEM = "00002"; // new sync header version, as format no longer compatible with previous structure
 const char AudioReactive::UDP_SYNC_HEADER_v1[] PROGMEM = "00001"; // old sync header version - need to add backwards-compatibility feature
+const char AudioReactive::_addPalettes[] PROGMEM = "add-palettes";
+const char AudioReactive::_palName0[]    PROGMEM = "Ratio";
+const char AudioReactive::_palName1[]    PROGMEM = "Hue";
+const char AudioReactive::_palName2[]    PROGMEM = "Spectrum";
