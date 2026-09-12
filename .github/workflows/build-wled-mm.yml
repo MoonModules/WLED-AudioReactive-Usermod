@@ -26,11 +26,14 @@ jobs:
         run: pip install platformio
 
       - name: Override AR_lib_deps to use this commit
+        env:
+          AR_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          AR_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           cat > WLED-MM/platformio_override.ini << EOF
           [common_mm]
           AR_lib_deps =
-            https://github.com/${{ github.repository }}.git#${{ github.sha }}
+            https://github.com/${AR_REPO}.git#${AR_SHA}
             https://github.com/softhack007/arduinoFFT.git#56c867c
           EOF
 
