@@ -145,6 +145,7 @@ static bool audioSyncBroadcast = false;                   // if true, use subnet
 static bool udpSyncConnected = false;         // UDP connection status -> true if connected to UDP sync
 
 #define NUM_GEQ_CHANNELS 16                                           // number of frequency channels. Don't change !!
+#define MAX_PALETTES 5                                                // number of audioreactive palettes provided by this usermod
 
 // audioreactive variables
 #ifdef ARDUINO_ARCH_ESP32
@@ -174,6 +175,16 @@ volatile bool haveNewFFTResult = false; // flag to directly inform UDP sound sen
 static uint8_t fftResult[NUM_GEQ_CHANNELS]= {0};   // Our calculated freq. channel result table to be used by effects
 static float   fftCalc[NUM_GEQ_CHANNELS] = {0.0f}; // Try and normalize fftBin values to a max of 4096, so that 4096/16 = 256. (also used by dynamics limiter)
 static float   fftAvg[NUM_GEQ_CHANNELS] = {0.0f};  // Calculated frequency channel results, with smoothing (used if dynamics limiter is ON)
+
+static float   paletteBandAvg[NUM_GEQ_CHANNELS] = {0.0f}; // Slowly smoothed band averages used only by audio palettes 3 & 4 (EMA, ~390ms time constant, cadence-independent - see fillAudioPalettes())
+static constexpr float PALETTE_TIME_CONSTANT_MS = 390.0f; // time constant for paletteBandAvg smoothing; derived from original alpha=0.05 @ 20ms cycle (tau = -20ms / ln(1-0.05))
+// Aggregates derived from paletteBandAvg[], precomputed once per fillAudioPalettes() refresh
+// for use by getCRGBForBand() palettes 3 & 4 (see there for details).
+static uint8_t paletteHue3   = 0;   // case 3: spectral-centroid hue
+static uint8_t paletteSat3   = 180; // case 3: loudness-derived saturation
+static uint8_t paletteHue4   = 0;   // case 4: bass/mid/high-weighted hue
+static uint8_t paletteSat4   = 180; // case 4: dominance-derived saturation
+static float   paletteTotal4 = 0.0f;// case 4: total band energy (drives brightness)
 
 static uint16_t zeroCrossingCount = 0; // number of zero crossings in the current batch of 512 samples
 
@@ -1200,6 +1211,8 @@ class AudioReactive : public Usermod {
     bool     enabled = false;
   #endif
     bool     initDone = false;
+    bool     addPalettes = false;
+    int8_t   palettes = 0;
 
     // variables  for UDP sound sync
     WiFiUDP fftUdp;               // UDP object for sound sync (from WiFi UDP, not Async UDP!)
@@ -1249,8 +1262,18 @@ class AudioReactive : public Usermod {
     static const char _digitalmic[];
     static const char UDP_SYNC_HEADER[];
     static const char UDP_SYNC_HEADER_v1[];
+    static const char _addPalettes[];
+    static const char _palName0[];
+    static const char _palName1[];
+    static const char _palName2[];
+    static const char _palName3[];
+    static const char _palName4[];
 
     // private methods
+    void removeAudioPalettes(void);
+    void createAudioPalettes(void);
+    CRGB getCRGBForBand(int x, int pal);
+    void fillAudioPalettes(void);
 
     ////////////////////
     // Debug support  //
@@ -2145,6 +2168,7 @@ class AudioReactive : public Usermod {
       receivedFormat = 0;
       delay(100);
       if (enabled) connectUDPSoundSync();
+      if (enabled && addPalettes) createAudioPalettes();
       initDone = true;
       DEBUGSR_PRINT(F("AR: init done, enabled = "));
       DEBUGSR_PRINTLN(enabled ? F("true.") : F("false."));
@@ -2451,6 +2475,8 @@ class AudioReactive : public Usermod {
         lastTime = millis();
       }
 #endif
+
+      fillAudioPalettes();
     }
 
 #if defined(_MoonModules_WLED_) && defined(WLEDMM_FASTPATH)
@@ -2487,6 +2513,7 @@ class AudioReactive : public Usermod {
       memset(fftCalc, 0, sizeof(fftCalc)); 
       memset(fftAvg, 0, sizeof(fftAvg)); 
       memset(fftResult, 0, sizeof(fftResult)); 
+      memset(paletteBandAvg, 0, sizeof(paletteBandAvg));
       for(int i=(init?0:1); i<NUM_GEQ_CHANNELS; i+=2) fftResult[i] = 16; // make a tiny pattern
       inputLevel = 128;                                    // reset level slider to default
       autoResetPeak();
@@ -2537,6 +2564,7 @@ class AudioReactive : public Usermod {
       // reset sound data
       volumeRaw = 0; volumeSmth = 0;
       for(int i=(init?0:1); i<NUM_GEQ_CHANNELS; i+=2) fftResult[i] = 16; // make a tiny pattern
+      memset(paletteBandAvg, 0, sizeof(paletteBandAvg));
       autoResetPeak();
 
       if (init) {
@@ -2795,12 +2823,24 @@ class AudioReactive : public Usermod {
         if (usermod[FPSTR(_enabled)].is<bool>()) {
           enabled = usermod[FPSTR(_enabled)].as<bool>();
           if (prevEnabled != enabled) onUpdateBegin(!enabled);
+          if (addPalettes) {
+            // add/remove custom/audioreactive palettes
+            if (prevEnabled && !enabled) removeAudioPalettes();
+            if (!prevEnabled && enabled) createAudioPalettes();
+          }
         }
 #ifdef ARDUINO_ARCH_ESP32
         if (usermod[FPSTR(_inputLvl)].is<int>()) {
           inputLevel = min(255,max(0,usermod[FPSTR(_inputLvl)].as<int>()));
         }
 #endif
+      }
+    }
+
+    void onStateChange(uint8_t callMode) {
+      if (initDone && enabled && addPalettes && palettes==0) {
+        // if palettes were removed during JSON call re-add them
+        createAudioPalettes();
       }
     }
 
@@ -2843,6 +2883,7 @@ class AudioReactive : public Usermod {
     void addToConfig(JsonObject& root) override {
       JsonObject top = root.createNestedObject(FPSTR(_name));
       top[FPSTR(_enabled)] = enabled;
+      top[FPSTR(_addPalettes)] = addPalettes;
 #ifdef ARDUINO_ARCH_ESP32
     #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
       JsonObject amic = top.createNestedObject(FPSTR(_analogmic));
@@ -2915,6 +2956,7 @@ class AudioReactive : public Usermod {
     bool readFromConfig(JsonObject& root) override {
       JsonObject top = root[FPSTR(_name)];
       bool configComplete = !top.isNull();
+      bool oldAddPalettes = addPalettes;
 
 #ifdef ARDUINO_ARCH_ESP32
       // remember previous values
@@ -2927,6 +2969,7 @@ class AudioReactive : public Usermod {
 #endif
 
       configComplete &= getJsonValue(top[FPSTR(_enabled)], enabled);
+      configComplete &= getJsonValue(top[FPSTR(_addPalettes)], addPalettes);
 #ifdef ARDUINO_ARCH_ESP32
     #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
       configComplete &= getJsonValue(top[FPSTR(_analogmic)]["pin"], audioPin);
@@ -2979,6 +3022,14 @@ class AudioReactive : public Usermod {
       configComplete &= getJsonValue(top["sync"][F("skip_old_data")], audioSyncPurge);
       configComplete &= getJsonValue(top["sync"][F("check_sequence")], audioSyncSequence);
       configComplete &= getJsonValue(top["sync"][F("broadcast")], audioSyncBroadcast);
+
+#ifdef ARDUINO_ARCH_ESP32
+      if (initDone) {
+        // add/remove custom/audioreactive palettes
+        if ((oldAddPalettes && !addPalettes) || (oldAddPalettes && !enabled)) removeAudioPalettes();
+        if ((addPalettes && !oldAddPalettes && enabled) || (addPalettes && !oldEnabled && enabled)) createAudioPalettes();
+      }
+#endif
 
       // WLEDMM notify user when a reboot is necessary
       #ifdef ARDUINO_ARCH_ESP32
@@ -3284,6 +3335,220 @@ class AudioReactive : public Usermod {
     }
 };
 
+void AudioReactive::removeAudioPalettes(void) {
+  DEBUG_PRINTLN(F("Removing audio palettes."));
+  palettes -= (int8_t)removeUsermodPalettes(_name);
+  if (palettes < 0) palettes = 0; // safeguard
+}
+
+void AudioReactive::createAudioPalettes(void) {
+  if (palettes) return;
+  DEBUG_PRINTLN(F("Adding audio palettes."));
+  static const char *const palNames[MAX_PALETTES] PROGMEM = {_palName0, _palName1, _palName2, _palName3, _palName4};
+  for (int i=0; i<MAX_PALETTES; i++) {
+    if (usermodPalettes.size() < WLED_MAX_USERMOD_PALETTES) {
+      usermodPalettes.push_back({CRGBPalette16(CRGB(BLACK)), _name, (uint8_t)i, palNames[i]}); // start black, filled each loop by fillAudioPalettes()
+      palettes++;
+      DEBUG_PRINTLN(palettes);
+    } else break;
+  }
+}
+
+// credit @netmindz ar palette, adapted for usermod @blazoncek
+CRGB AudioReactive::getCRGBForBand(int x, int pal) {
+  CRGB value;
+  CHSV hsv;
+  int b;
+  switch (pal) {
+    case 2:
+      b = map(x, 0, 255, 0, NUM_GEQ_CHANNELS/2); // convert palette position to lower half of freq band
+      hsv = CHSV(fftResult[b], 255, x);
+      value = hsv;  // convert to R,G,B
+      break;
+    case 1:
+      b = map(x, 1, 255, 0, 10); // convert palette position to lower half of freq band
+      hsv = CHSV(fftResult[b], 255, map(fftResult[b], 0, 255, 30, 255));  // pick hue
+      value = hsv;  // convert to R,G,B
+      break;
+    // AI: below section was generated by an AI
+    case 3: {
+      // "Track Character" palette (palette index 3)
+      // Hue reflects the spectral centroid of paletteBandAvg[] (smoothed with a ~390ms
+      // time constant, see fillAudioPalettes()), i.e. the tonal balance of the music:
+      //   low centroid  (bass-heavy drop)     → warm red/orange  (hue ≈ 0)
+      //   mid centroid  (vocals/melody)        → green/cyan       (hue ≈ 80-120)
+      //   high centroid (cymbals/bright synth) → blue/purple      (hue ≈ 200)
+      // x (0-255) spreads palette positions ±30 hue units around that base hue.
+      // baseHue and saturation are precomputed once per refresh in fillAudioPalettes()
+      // (they don't depend on x, so there's no need to redo the 16-channel scan here
+      // on every one of the 3 calls per refresh).
+      // TODO: use CHSV32 with 16-bit hue for finer resolution
+      int8_t hueSpread = map(x, 0, 255, -30, 30); // spread palette positions ±30 hue units
+      // paletteHue3 ∈ [0,200] and hueSpread ∈ [-30,30]; the sum can go negative, so clamp
+      // through a signed int before narrowing to uint8_t instead of letting it silently
+      // wrap around (which would turn the warm/bass end of the gradient into purple).
+      uint8_t hue = (uint8_t)constrain((int)paletteHue3 + hueSpread, 0, 255);
+      hsv = CHSV(hue, paletteSat3, (uint8_t)constrain(x, 30, 255));
+      value = hsv;
+      break;
+    }
+    // AI: end
+    // AI: below section was generated by an AI
+    case 4: {
+      // "Spectral Balance" palette (palette index 4)
+      // Divides the spectrum into three broad bands and uses their smoothed energy ratio
+      // (paletteBandAvg[], ~390ms time constant) to derive hue:
+      //   bass dominant  (channels  0-3,  ~43-301 Hz)  → warm hue  ≈ 20  (red/orange)
+      //   mid dominant   (channels  4-9,  ~301-1895 Hz) → green hue ≈ 110 (green/cyan)
+      //   high dominant  (channels 10-15, ~1895-9259 Hz)→ cool hue  ≈ 190 (blue/violet)
+      // x (0-255) spreads palette positions ±25 hue units around that weighted hue,
+      // giving a smooth colour band rather than a single flat colour.
+      // paletteHue4/paletteSat4/paletteTotal4 are precomputed once per refresh in
+      // fillAudioPalettes() (they don't depend on x).
+      // TODO: use CHSV32 with 16-bit hue for finer resolution
+      int8_t hueOffset = map(x, 0, 255, -25, 25); // spread palette positions ±25 hue units
+      // paletteHue4 ∈ [20,190] and hueOffset ∈ [-25,25]; clamp through a signed int
+      // before narrowing to uint8_t so the sum can't silently wrap around uint8_t.
+      uint8_t hue = (uint8_t)constrain((int)paletteHue4 + hueOffset, 0, 255);
+      // brightness: minimum 30, boosted by overall loudness (average band value, same 0..255
+      // scale as any individual band - see paletteSat3's comment for why AVERAGE rather than
+      // the raw SUM in paletteTotal4 is used as the loudness reference) and palette position
+      float avgEnergy4 = paletteTotal4 / (float)NUM_GEQ_CHANNELS;
+      uint8_t val = (uint8_t)constrain((int)mapf(avgEnergy4, 0.0f, 255.0f, 0.0f, 100.0f) + (int)map(x, 0, 255, 30, 255), 30, 255);
+      hsv = CHSV(hue, paletteSat4, val);
+      value = hsv;
+      break;
+    }
+    // AI: end
+    default:
+      if (x == 1) {
+        value = CRGB(fftResult[10]/2, fftResult[4]/2, fftResult[0]/2);
+      } else if(x == 255) {
+        value = CRGB(fftResult[10]/2, fftResult[0]/2, fftResult[4]/2);
+      } else {
+        value = CRGB(fftResult[0]/2, fftResult[4]/2, fftResult[10]/2);
+      }
+      break;
+  }
+  return value;
+}
+
+void AudioReactive::fillAudioPalettes() {
+  if (!palettes) return;
+
+  // AI: below section was generated by an AI
+  // Update slowly-smoothed band averages used by palettes 3 & 4, so palette colours
+  // reflect the overall tonal character of the music rather than reacting to individual
+  // beats (which would appear "twitchy"). fillAudioPalettes() is called once per
+  // AudioReactive::loop() iteration, which runs at a highly variable cadence - roughly
+  // 0.3ms to 1000ms depending on LED count and file/OTA activity - not a fixed rate, so
+  // the EMA's alpha is derived from the actual elapsed time on every call rather than
+  // being a fixed constant tuned for one assumed cadence.
+  // alpha = dt / (tau + dt) approximates the exact alpha = 1 - exp(-dt/tau) for a given
+  // time constant tau without pulling in expf() (logf() is already linked into this
+  // file elsewhere; expf() would not be).
+  static unsigned long lastPaletteTime = 0;
+  unsigned long now = millis();
+  unsigned long dtMs = lastPaletteTime ? (now - lastPaletteTime) : 20UL;
+  lastPaletteTime = now;
+  if (dtMs > 2000UL) dtMs = 2000UL; // cap a single "catch-up" jump after a long stall (OTA, file I/O)
+  float alpha = (float)dtMs / (PALETTE_TIME_CONSTANT_MS + (float)dtMs);
+  for (int i = 0; i < NUM_GEQ_CHANNELS; i++) {
+    paletteBandAvg[i] += alpha * ((float)fftResult[i] - paletteBandAvg[i]);
+  }
+
+  // Precompute the x-independent aggregates for palettes 3 & 4 once per refresh (see
+  // getCRGBForBand() cases 3 & 4), instead of redoing these 16-channel scans on each of
+  // the 3 getCRGBForBand() calls (x=1/128/255) made below for every refresh.
+  {
+    // Palette 3 ("Track Character"): spectral centroid → hue
+    static const float bandFreq[NUM_GEQ_CHANNELS] = {       // approximate centre frequency (Hz) of each GEQ channel
+      65, 107, 172, 258, 365, 495, 689, 969,
+      1270, 1658, 2153, 2713, 3359, 4091, 5792, 8182
+    };
+    float wSum = 0, tEnergy = 0;
+    for (int i = 0; i < NUM_GEQ_CHANNELS; i++) {
+      wSum += paletteBandAvg[i] * bandFreq[i];               // frequency-weighted energy
+      tEnergy += paletteBandAvg[i];                          // total energy
+    }
+    // centroid = energy-weighted average frequency; default to 500 Hz when signal is silent
+    float centroid = (tEnergy > 1.0f) ? (wSum / tEnergy) : 500.0f;
+    // Map centroid to hue on a log scale (human pitch perception is logarithmic).
+    // ln(60 Hz) ≈ 4.0943, ln(8000 Hz) ≈ 8.9872 → hue range 0..200 (red → blue-purple).
+    // Using logf() rather than log2f() avoids pulling in a second libm log function;
+    // logf() is already linked into this file elsewhere. Bounds are rounded outward so
+    // mapf()'s result can't go slightly negative.
+    float logC = logf(constrain(centroid, 60.0f, 8000.0f));
+    paletteHue3 = (uint8_t)mapf(logC, 4.0943f, 8.9872f, 0.0f, 200.0f); // mapf() cannot produce negative results due to previous constrain() --> safe to directly cast to uint8_t
+    // Saturation rises with overall loudness. tEnergy is the SUM of 16 EMA'd bands, so its
+    // theoretical ceiling is 16*255=4080 - but real music never drives all 16 log-spaced
+    // bands to full scale simultaneously, so scaling against that ceiling pins saturation
+    // near its floor for any real signal. Use the AVERAGE band value instead (tEnergy/16),
+    // which is on the same 0..255 scale that any individual band is treated on elsewhere
+    // in this file (e.g. the `case 1`/`case 2` palettes above), so saturation actually
+    // varies across a musically realistic loudness range.
+    float avgEnergy3 = tEnergy / (float)NUM_GEQ_CHANNELS;
+    paletteSat3 = (uint8_t)constrain((int)mapf(avgEnergy3, 0.0f, 255.0f, 180.0f, 255.0f), 180, 255);
+
+    // Palette 4 ("Spectral Balance"): bass/mid/high energy ratio → hue.
+    // Reuses tEnergy (== bassEnergy+midEnergy+highEnergy, since channels 0-15 are already
+    // summed above) as the total instead of re-summing it, to avoid two full 16-channel
+    // sums doing the same addition per refresh.
+    float bassEnergy = 0, midEnergy = 0, highEnergy = 0;
+    for (int i = 0;  i < 4;  i++) bassEnergy += paletteBandAvg[i];  // sub-bass + bass
+    for (int i = 4;  i < 10; i++) midEnergy  += paletteBandAvg[i];  // midrange
+    for (int i = 10; i < 16; i++) highEnergy += paletteBandAvg[i];  // high-mid + high
+    float total = (tEnergy < 1.0f) ? 1.0f : tEnergy;          // avoid division by zero when silent
+    float bassRatio = bassEnergy / total;                     // fraction of energy in bass band
+    float midRatio  = midEnergy  / total;
+    float highRatio = highEnergy / total;
+    // Weighted hue: pure bass→20, pure mid→110, pure high→190
+    int weightedHue = (int)roundf(bassRatio * 20.0f + midRatio * 110.0f + highRatio * 190.0f);
+    paletteHue4 = (uint8_t)constrain(weightedHue, 0, 255);
+    // Saturation: a clearly dominant band → high sat; a balanced spectrum → lower sat.
+    // maxRatio is the max of three ratios that sum to 1, so its real range is [1/3, 1],
+    // not [0, 1]; map that actual range onto [180, 255] instead of an arbitrary factor,
+    // so saturation actually varies instead of floor/ceiling-clamping almost always.
+    float maxRatio = fmaxf(bassRatio, fmaxf(midRatio, highRatio));
+    paletteSat4 = (uint8_t)constrain((int)mapf(maxRatio, 1.0f/3.0f, 1.0f, 180.0f, 255.0f), 180, 255);
+    paletteTotal4 = total;
+  }
+  // AI: end
+
+  // Scan by name pointer identity to find the palettes we added, palIndex = 0/1/2... selects the getCRGBForBand variant, matching how the entries were created.
+  for (auto &ump : usermodPalettes) {
+    if (ump.name != _name) continue;
+    const int pal = ump.palIndex;
+    uint8_t tcp[16];  // Needs to be 4 times however many colors are being used.
+                      // 3 colors = 12, 4 colors = 16, etc.
+
+    tcp[0] = 0;  // anchor of first color - must be zero
+    tcp[1] = 0;
+    tcp[2] = 0;
+    tcp[3] = 0;
+
+    CRGB rgb = getCRGBForBand(1, pal);
+    tcp[4] = 1;  // anchor of first color
+    tcp[5] = rgb.r;
+    tcp[6] = rgb.g;
+    tcp[7] = rgb.b;
+
+    rgb = getCRGBForBand(128, pal);
+    tcp[8] = 128;
+    tcp[9] = rgb.r;
+    tcp[10] = rgb.g;
+    tcp[11] = rgb.b;
+
+    rgb = getCRGBForBand(255, pal);
+    tcp[12] = 255;  // anchor of last color - must be 255
+    tcp[13] = rgb.r;
+    tcp[14] = rgb.g;
+    tcp[15] = rgb.b;
+
+    ump.palette.loadDynamicGradientPalette(tcp);
+  }
+}
+
 // strings to reduce flash memory usage (used more than twice)
 const char AudioReactive::_name[]       PROGMEM = "AudioReactive";
 const char AudioReactive::_enabled[]    PROGMEM = "enabled";
@@ -3294,3 +3559,9 @@ const char AudioReactive::_analogmic[]  PROGMEM = "analogmic";
 const char AudioReactive::_digitalmic[] PROGMEM = "digitalmic";
 const char AudioReactive::UDP_SYNC_HEADER[]    PROGMEM = "00002"; // new sync header version, as format no longer compatible with previous structure
 const char AudioReactive::UDP_SYNC_HEADER_v1[] PROGMEM = "00001"; // old sync header version - need to add backwards-compatibility feature
+const char AudioReactive::_addPalettes[] PROGMEM = "add-palettes";
+const char AudioReactive::_palName0[]    PROGMEM = "Ratio";
+const char AudioReactive::_palName1[]    PROGMEM = "Hue";
+const char AudioReactive::_palName2[]    PROGMEM = "Spectrum";
+const char AudioReactive::_palName3[]    PROGMEM = "Track Character";
+const char AudioReactive::_palName4[]    PROGMEM = "Spectral Balance";
