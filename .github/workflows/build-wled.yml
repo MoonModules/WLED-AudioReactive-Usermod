@@ -1,0 +1,42 @@
+name: Build WLED
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout WLED
+        uses: actions/checkout@v4
+        with:
+          repository: wled/WLED
+          path: WLED
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Override custom_usermods to use this commit (out-of-tree)
+        env:
+          AR_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          AR_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          cat > WLED/platformio_override.ini << EOF
+          [env:esp32dev]
+          custom_usermods =
+            audioreactive = https://github.com/${AR_REPO}.git#${AR_SHA}
+          EOF
+
+      - name: Build
+        run: |
+          cd WLED
+          pio run -e esp32dev
