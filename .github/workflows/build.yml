@@ -16,6 +16,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: wled/WLED
+          ref: 16_x
           path: WLED
 
       - name: Set up Python
