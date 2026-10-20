@@ -33,6 +33,16 @@
  * ....
  */
 
+// make sure that defines are consistent for WLEDMM
+#if defined(WLEDMM) || defined(_MoonModules_WLED_)
+  #ifndef _MoonModules_WLED_
+    #define _MoonModules_WLED_
+  #endif
+  #ifndef WLED_USE_PINMANAGER_V14
+    #define WLED_USE_PINMANAGER_V14
+  #endif
+#endif
+
 #if !defined(WLEDMM_FASTPATH) && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4))
 #warning "please define WLEDMM_FASTPATH for full performance on your board"
 #endif
