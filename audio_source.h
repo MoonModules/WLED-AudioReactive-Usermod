@@ -544,7 +544,7 @@ public:
         ERRORSR_PRINTF("\nAR: invalid ES7243 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -676,7 +676,7 @@ class ES8388Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid ES8388 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -853,7 +853,7 @@ class ES8388Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid es8311 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -958,7 +958,7 @@ class WM8978Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid WM8978 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -1062,7 +1062,7 @@ class AC101Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid AC101 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
