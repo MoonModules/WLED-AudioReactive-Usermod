@@ -33,8 +33,11 @@
  * ....
  */
 
+#if !defined(WLEDMM_FASTPATH) && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4))
+#warning "please define WLEDMM_FASTPATH for full performance on your board"
+#endif
 
-#if defined(WLEDMM_FASTPATH) && defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32)
+#if defined(WLEDMM_FASTPATH) && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4))
 #define FFT_USE_SLIDING_WINDOW             // perform FFT with sliding window =  50% overlap
 #endif
 
@@ -53,14 +56,14 @@
 #endif
 #endif
 
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4)
 // this applies "pink noise scaling" to FFT results before computing the major peak for effects.
 // currently only for ESP32-S3 and classic ESP32, due to increased runtime
 #define FFT_MAJORPEAK_HUMAN_EAR
 #endif
 
 // high-resolution type for input filters
-#if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4)
 #define SR_HIRES_TYPE double  // ESP32 and ESP32-S3 (with FPU) are fast enough to use "double"
 #else
 #define SR_HIRES_TYPE float   // prefer faster type on slower boards (-S2, -C3)
