@@ -3322,12 +3322,16 @@ class AudioReactive : public Usermod {
 };
 
 void AudioReactive::removeAudioPalettes(void) {
+#ifndef _MoonModules_WLED_
+  // WLEDMM does not support usermod palettes
   DEBUG_PRINTLN(F("Removing audio palettes."));
   palettes -= (int8_t)removeUsermodPalettes(_name);
   if (palettes < 0) palettes = 0; // safeguard
+#endif
 }
 
 void AudioReactive::createAudioPalettes(void) {
+#ifndef _MoonModules_WLED_
   if (palettes) return;
   DEBUG_PRINTLN(F("Adding audio palettes."));
   static const char *const palNames[MAX_PALETTES] PROGMEM = {_palName0, _palName1, _palName2};
@@ -3338,8 +3342,10 @@ void AudioReactive::createAudioPalettes(void) {
       DEBUG_PRINTLN(palettes);
     } else break;
   }
+#endif
 }
 
+#ifndef _MoonModules_WLED_
 // credit @netmindz ar palette, adapted for usermod @blazoncek
 CRGB AudioReactive::getCRGBForBand(int x, int pal) {
   CRGB value;
@@ -3368,8 +3374,10 @@ CRGB AudioReactive::getCRGBForBand(int x, int pal) {
   }
   return value;
 }
+#endif
 
 void AudioReactive::fillAudioPalettes() {
+#ifndef _MoonModules_WLED_
   if (!palettes) return;
   // Scan by name pointer identity to find the palettes we added, palIndex = 0/1/2... selects the getCRGBForBand variant, matching how the entries were created.
   for (auto &ump : usermodPalettes) {
@@ -3403,6 +3411,7 @@ void AudioReactive::fillAudioPalettes() {
 
     ump.palette.loadDynamicGradientPalette(tcp);
   }
+#endif
 }
 
 // strings to reduce flash memory usage (used more than twice)
