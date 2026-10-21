@@ -16,7 +16,9 @@
 #ifdef ARDUINO_ARCH_ESP32
 
 #include <driver/i2s.h>
-#include <driver/adc.h>
+#if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
+  #include <driver/adc.h>
+#endif
 
 #include <math.h>
 #endif
@@ -77,7 +79,7 @@
 //#define SR_STATS
 
 #if !defined(FFTTASK_PRIORITY)
-#if defined(WLEDMM_FASTPATH) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && defined(ARDUINO_ARCH_ESP32)
+#if defined(WLEDMM_FASTPATH) && defined(ARDUINO_ARCH_ESP32) && (SOC_CPU_CORES_NUM > 1)
 // FASTPATH: use higher priority, to avoid that webserver (ws, json, etc) delays sample processing
 //#define FFTTASK_PRIORITY 3 // competing with async_tcp
 #define FFTTASK_PRIORITY 4   // above async_tcp
@@ -87,14 +89,14 @@
 #endif
 #endif
 
-#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4)
+#if defined(SOC_CPU_HAS_FPU) && (SOC_CPU_CORES_NUM > 1)
 // this applies "pink noise scaling" to FFT results before computing the major peak for effects.
 // currently only for ESP32-S3 and classic ESP32, due to increased runtime
 #define FFT_MAJORPEAK_HUMAN_EAR
 #endif
 
 // high-resolution type for input filters
-#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4)
+#if defined(SOC_CPU_HAS_FPU) && (SOC_CPU_CORES_NUM > 1)
 #define SR_HIRES_TYPE double  // ESP32 and ESP32-S3 (with FPU) are fast enough to use "double"
 #else
 #define SR_HIRES_TYPE float   // prefer faster type on slower boards (-S2, -C3)
@@ -221,7 +223,7 @@ static bool limiterOn = false;                 // bool: enable / disable dynamic
 #else
 static bool limiterOn = true;
 #endif
-static uint8_t micQuality = 0;   // affects input filtering; 0 normal, 1 minimal filtering, 2 no filtering
+[[maybe_unused]] static uint8_t micQuality = 0;   // input filtering; 0 normal, 1 minimal filtering, 2 no filtering - unused on 8266
 #ifdef FFT_USE_SLIDING_WINDOW
 static uint16_t attackTime = 24;              // int: attack time in milliseconds. Default 0.024sec
 static uint16_t decayTime = 250;              // int: decay time in milliseconds.  New default 250ms.
@@ -294,7 +296,7 @@ static uint8_t useInputFilter = 0;                        // enables low-cut fil
 
 //WLEDMM experimental settings
 static uint8_t micLevelMethod = 1;                        // 0=old "floating" miclev, 1=new  "freeze" mode, 2=fast freeze mode (mode 2 may not work for you)
-#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3)
+#if !defined(SOC_CPU_HAS_FPU) || (SOC_CPU_CORES_NUM < 2)
 static constexpr uint8_t averageByRMS = false;                      // false: use mean value, true: use RMS (root mean squared). use simpler method on slower MCUs.
 #else
 static constexpr uint8_t averageByRMS = true;                       // false: use mean value, true: use RMS (root mean squared). use better method on fast MCUs.
@@ -448,7 +450,7 @@ constexpr float binWidth = SAMPLE_RATE / (float)samplesFFT; // frequency range o
 
 // Create FFT object
 // lib_deps += https://github.com/kosme/arduinoFFT#develop @ 1.9.2
-#if  !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+#if !defined(SOC_CPU_HAS_FPU)
 // these options actually cause slow-down on -S2 (-S2 doesn't have floating point hardware)
 //#define FFT_SPEED_OVER_PRECISION     // enables use of reciprocals (1/x etc), and a few other speedups - WLEDMM not faster on ESP32
 //#define FFT_SQRT_APPROXIMATION       // enables "quake3" style inverse sqrt                               - WLEDMM slower on ESP32
@@ -719,7 +721,7 @@ void FFTcode(void * parameter)
     }
 #endif
 
-#if defined(WLEDMM_FASTPATH) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && defined(ARDUINO_ARCH_ESP32)
+#if defined(WLEDMM_FASTPATH) && defined(ARDUINO_ARCH_ESP32) && (SOC_CPU_CORES_NUM > 1)
     // experimental - be nice to LED update task (trying to avoid flickering) - dual core only
 #if FFTTASK_PRIORITY > 1
     if (strip.isServicing()) delay(1);
@@ -1335,7 +1337,7 @@ class AudioReactive : public Usermod {
     static const char _name[];
     static const char _enabled[];
     static const char _inputLvl[];
-#if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(ARDUINO_ARCH_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && !defined(__riscv)
     static const char _analogmic[];
 #endif
     static const char _digitalmic[];
@@ -2074,28 +2076,28 @@ class AudioReactive : public Usermod {
       // Reset I2S peripheral for good measure - not needed in esp-idf v4.4.x and later.
     #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 4, 0)
       i2s_driver_uninstall(I2S_NUM_0);   // E (696) I2S: i2s_driver_uninstall(2006): I2S port 0 has not installed
-      #if !defined(CONFIG_IDF_TARGET_ESP32C3)
+      #if defined(ARDUINO_ARCH_ESP32) && !defined(__riscv)
         delay(100);
         periph_module_reset(PERIPH_I2S0_MODULE);   // not possible on -C3
       #endif
     #endif
       delay(100);         // Give that poor microphone some time to setup.
 
-      #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+      #if defined(SOC_I2S_SUPPORTS_PDM_RX) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S2)
         if ((i2sckPin == I2S_PIN_NO_CHANGE) && (i2ssdPin >= 0) && (i2swsPin >= 0) 
             && ((dmType == 1) || (dmType == 4)) ) dmType = 51;   // dummy user support: SCK == -1 --means--> PDM microphone
       #endif
 
       useInputFilter = 2; // default: DC blocker
       switch (dmType) {
-      #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
         // stub cases for not-yet-supported I2S modes on other ESP32 chips
+        #if !defined(CONFIG_IDF_TARGET_ESP32) || !defined(SOC_I2S_SUPPORTS_ADC) ||  (ESP_IDF_VERSION_MAJOR > 4)
         case 0:  //ADC analog
-        #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3)
+		#endif
+        #if !defined(SOC_I2S_SUPPORTS_PDM_RX) || defined(__riscv) || defined(CONFIG_IDF_TARGET_ESP32S2)
         case 5:  //PDM Microphone
         case 51: //legacy PDM Microphone
         #endif
-      #endif
         case 1:
           DEBUGSR_PRINT(F("AR: Generic I2S Microphone - ")); DEBUGSR_PRINTLN(F(I2S_MIC_CHANNEL_TEXT));
           audioSource = new I2SSource(SAMPLE_RATE, BLOCK_SIZE);
@@ -2128,7 +2130,7 @@ class AudioReactive : public Usermod {
           delay(100);
           if (audioSource) audioSource->initialize(i2swsPin, i2ssdPin, i2sckPin, mclkPin);
           break;
-        #if  !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+        #if defined(SOC_I2S_SUPPORTS_PDM_RX) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S2)
         case 5:
           DEBUGSR_PRINT(F("AR: Generic PDM Microphone - ")); DEBUGSR_PRINTLN(F(I2S_PDM_MIC_CHANNEL_TEXT));
           audioSource = new I2SSource(SAMPLE_RATE, BLOCK_SIZE, 1.0f/4.0f);
@@ -2190,6 +2192,9 @@ class AudioReactive : public Usermod {
           if (i2c_scl >= 0) sclPin = -1;
           if (audioSource) audioSource->initialize(i2swsPin, i2ssdPin, i2sckPin, mclkPin);
           break;
+        case 10: // reserved for ES7210 (without ES83xx)
+          USER_PRINTLN(F("AR: ES7220 Source (Mic) is not supported yet - trying ES8311."));
+		  // falls through
         case 9:
           DEBUGSR_PRINTLN(F("AR: ES8311 Source (Mic)"));
           audioSource = new ES8311Source(SAMPLE_RATE, BLOCK_SIZE, 1.0f);
@@ -2211,7 +2216,7 @@ class AudioReactive : public Usermod {
             audioSyncEnabled = AUDIOSYNC_REC; // force udp sound receive mode
           break;
 
-        #if  !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+        #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
         // ADC over I2S is only possible on "classic" ESP32
         case 0:
         default:
@@ -2948,7 +2953,7 @@ class AudioReactive : public Usermod {
       JsonObject top = root.createNestedObject(FPSTR(_name));
       top[FPSTR(_enabled)] = enabled;
 #ifdef ARDUINO_ARCH_ESP32
-    #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+    #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
       JsonObject amic = top.createNestedObject(FPSTR(_analogmic));
       amic["pin"] = audioPin;
     #endif
@@ -2987,6 +2992,7 @@ class AudioReactive : public Usermod {
       freqScale[F("scale")] = FFTScalingMode;
       freqScale[F("profile")] = pinkIndex; //WLEDMM
 #endif
+
       JsonObject dynLim = top.createNestedObject("dynamics");
       dynLim[F("limiter")] = limiterOn;
       dynLim[F("rise")] = attackTime;
@@ -3032,22 +3038,22 @@ class AudioReactive : public Usermod {
 
       configComplete &= getJsonValue(top[FPSTR(_enabled)], enabled);
 #ifdef ARDUINO_ARCH_ESP32
-    #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+    #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
       configComplete &= getJsonValue(top[FPSTR(_analogmic)]["pin"], audioPin);
     #else
       audioPin = -1; // MCU does not support analog mic
     #endif
 
       configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["type"],   dmType);
-    #if  defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+    #if !defined(CONFIG_IDF_TARGET_ESP32)
       if (dmType == 0) dmType = SR_DMTYPE;   // MCU does not support analog
-      #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3)
+      #if !defined(SOC_I2S_SUPPORTS_PDM_RX) || defined(__riscv) || defined(CONFIG_IDF_TARGET_ESP32S2)
       if (dmType == 5) dmType = SR_DMTYPE;   // MCU does not support PDM
       if (dmType == 51) dmType = SR_DMTYPE;  // MCU does not support legacy PDM
-      #endif
-    #else
+      #else
       if (dmType == 5) useInputFilter = 1;      // enable filter for PDM
-      if (dmType == 51) useInputFilter = 1;     // switch on filter for legacy PDM    
+      if (dmType == 51) useInputFilter = 1;     // switch on filter for legacy PDM
+	  #endif
     #endif
 
       configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][0], i2ssdPin);
@@ -3105,7 +3111,7 @@ class AudioReactive : public Usermod {
       oappend(SET_F("addInfo(ux+':help',0,'<button onclick=\"location.href=&quot;https://mm.kno.wled.ge/soundreactive/Sound-Settings&quot;\" type=\"button\">?</button>');"));
 #ifdef ARDUINO_ARCH_ESP32      
       //WLEDMM: add defaults
-      #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)  // -S3/-S2/-C3 don't support analog audio
+      #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5) // -S3/-S2/-C3 don't support analog audio
       #ifdef AUDIOPIN
         oappend(SET_F("xOpt(ux+':analogmic:pin',1,' ⎌',")); oappendi(AUDIOPIN); oappend(");"); 
       #endif
@@ -3118,7 +3124,7 @@ class AudioReactive : public Usermod {
       #else
         oappend(SET_F("addOption(dd,'None - network receive only',254);"));
       #endif
-      #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+      #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC)
         #if SR_DMTYPE==0
           oappend(SET_F("addOption(dd,'Generic Analog (⎌)',0);"));
         #else
@@ -3145,7 +3151,7 @@ class AudioReactive : public Usermod {
       #else
         oappend(SET_F("addOption(dd,'Generic I2S with Mclk',4);"));
       #endif
-      #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+      #if defined(SOC_I2S_SUPPORTS_PDM_RX) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S2)
         #if SR_DMTYPE==5
           oappend(SET_F("addOption(dd,'Generic PDM (⎌)',5);"));
         #else
@@ -3343,7 +3349,7 @@ class AudioReactive : public Usermod {
 
       oappend(SET_F("addInfo(uxp,3,'<i>master clock</i>','I2S MCLK');"));
       oappend(SET_F("dRO(uxp,3);")); // disable read only pins
-      #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+      #if defined(CONFIG_IDF_TARGET_ESP32)
         oappend(SET_F("dOpt(uxp,3,2,2);")); //only use -1, 0, 1 or 3
         oappend(SET_F("dOpt(uxp,3,4,39);")); //only use -1, 0, 1 or 3
       #endif
@@ -3392,7 +3398,7 @@ class AudioReactive : public Usermod {
 const char AudioReactive::_name[]       PROGMEM = "AudioReactive";
 const char AudioReactive::_enabled[]    PROGMEM = "enabled";
 const char AudioReactive::_inputLvl[]   PROGMEM = "inputLevel";
-#if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
 const char AudioReactive::_analogmic[]  PROGMEM = "analogmic";
 #endif
 const char AudioReactive::_digitalmic[] PROGMEM = "digitalmic";
