@@ -195,8 +195,9 @@ static volatile bool disableSoundProcessing = false;      // if true, sound proc
 static uint8_t audioSyncEnabled = AUDIOSYNC_NONE;         // bit field: bit 0 - send, bit 1 - receive, bit 2 - use local if not receiving
 static bool audioSyncSequence = true;                     // if true, the receiver will drop out-of-sequence packets
 static uint8_t audioSyncPurge = 1;                        // 0: process each packet (don't purge); 1: auto-purge old packets; 2: only process latest received packet (always purge)
+static bool audioSyncSilenceStop = true;                  // if true, the sender will stop transmitting UDP packets after 30 seconds of continuous silence
 static bool audioSyncBroadcast = false;                   // if true, use subnet broadcast for sending instead of multicast; receivers on multicast sockets will still receive broadcast packets
-static bool udpSyncConnected = false;         // UDP connection status -> true if connected to UDP sync
+static bool udpSyncConnected = false;                     // UDP connection status -> true if connected to UDP sync
 static volatile bool isOOM = false;                       // FFTask: not enough memory for buffers (audio processing failed to start)
 
 #define NUM_GEQ_CHANNELS 16                               // number of frequency channels. Don't change !!
@@ -1347,6 +1348,7 @@ class AudioReactive : public Usermod {
     // used to feed "Info" Page
     unsigned long last_UDPTime = 0;    // time of last valid UDP sound sync data packet
     int receivedFormat = 0;            // last received UDP sound sync format - 0=none, 1=v1 (0.13.x), 2=v2 (0.14.x)
+    unsigned long syncSilenceStart = 0; // millis() when continuous silence began for the sender; 0 = sound is (or was recently) present
     float maxSample5sec = 0.0f;        // max sample (after AGC) in last 5 seconds 
     unsigned long sampleMaxTimer = 0;  // last time maxSample5sec was reset
     #define CYCLE_SAMPLEMAX 3500       // time window for measuring
@@ -2359,7 +2361,7 @@ class AudioReactive : public Usermod {
       // sound sync "receive or local"
       bool useNetworkAudio = false;
       if (audioSyncEnabled > AUDIOSYNC_SEND) {  // we are in "receive" or "receive+local" mode
-        if (udpSyncConnected && ((millis() - last_UDPTime) <= AUDIOSYNC_IDLE_MS))
+        if (udpSyncConnected && (receivedFormat > 0) && ((millis() - last_UDPTime) <= AUDIOSYNC_IDLE_MS)) // receivedFormat == 0 means we haven't received valid data yet
           useNetworkAudio = true;
         else
           useNetworkAudio = false;
@@ -2563,6 +2565,12 @@ class AudioReactive : public Usermod {
 
 #ifdef ARDUINO_ARCH_ESP32
       //UDP Microphone Sync  - transmit mode
+      // Track sender silence: reset timer when sound is present, start it when silence begins
+      if (audioSyncEnabled & AUDIOSYNC_SEND) {
+        if (volumeSmth >= 1.0f) syncSilenceStart = 0;           // sound detected - clear silence timer
+        else if (syncSilenceStart == 0) syncSilenceStart = millis(); // just went silent - start timer
+      } else syncSilenceStart = 0;                                   // not in send mode - no silence
+
     #if defined(WLEDMM_FASTPATH)
       if ((audioSyncEnabled & AUDIOSYNC_SEND) && (haveNewFFTResult || (millis() - lastTime > 24))) {  // fastpath: send data once results are ready, or each 25ms as fallback (max sampling time is 23ms)
     #else
@@ -2570,7 +2578,10 @@ class AudioReactive : public Usermod {
     #endif
         haveNewFFTResult = false; // reset notification
         // Only run the transmit code IF we're in Transmit mode
-        transmitAudioData();
+        // Sender silence gate: skip transmission when silence has persisted for more than 30 seconds
+        if (!audioSyncSilenceStop || (syncSilenceStart == 0) || (millis() - syncSilenceStart < 30000UL)) {
+          transmitAudioData();
+        }
         lastTime = millis();
       }
 #endif
@@ -2613,6 +2624,7 @@ class AudioReactive : public Usermod {
       for(int i=(init?0:1); i<NUM_GEQ_CHANNELS; i+=2) fftResult[i] = 16; // make a tiny pattern
       inputLevel = 128;                                    // reset level slider to default
       autoResetPeak();
+	  syncSilenceStart = 0;
 
       if (init && FFT_Task) {
         delay(25);                // WLEDMM: givesome time for I2S driver to finish sampling
@@ -3021,6 +3033,7 @@ class AudioReactive : public Usermod {
       sync[F("mode")] = audioSyncEnabled;
       sync[F("skip_old_data")] = audioSyncPurge;
       sync[F("check_sequence")] = audioSyncSequence;
+      sync[F("silence_stop")] = audioSyncSilenceStop;
       sync[F("broadcast")] = audioSyncBroadcast;
     }
 
@@ -3106,6 +3119,7 @@ class AudioReactive : public Usermod {
       configComplete &= getJsonValue(top["sync"][F("mode")], audioSyncEnabled);
       configComplete &= getJsonValue(top["sync"][F("skip_old_data")], audioSyncPurge);
       configComplete &= getJsonValue(top["sync"][F("check_sequence")], audioSyncSequence);
+      configComplete &= getJsonValue(top["sync"][F("silence_stop")], audioSyncSilenceStop);
       configComplete &= getJsonValue(top["sync"][F("broadcast")], audioSyncBroadcast);
 
       // WLEDMM notify user when a reboot is necessary
@@ -3343,6 +3357,14 @@ class AudioReactive : public Usermod {
       oappend(SET_F("addOption(dd,'Off',0);"));
       oappend(SET_F("addOption(dd,'On',1);"));
       oappend(SET_F("addInfo(ux+':sync:check_sequence',1,'<i>when receiving</i>');"));
+
+#ifdef ARDUINO_ARCH_ESP32
+      // silence_stop: Sender stops transmitting UDP packets after 30s of continuous silence
+      oappend(SET_F("dd=addDropdown(ux,'sync:silence_stop');"));
+      oappend(SET_F("addOption(dd,'Off',0);"));
+      oappend(SET_F("addOption(dd,'On',1);"));
+#endif
+
       // broadcast: send to subnet broadcast address instead of multicast
       oappend(SET_F("addInfo(ux+':sync:broadcast',1,'<i>use broadcast instead of multicast</i> ☾<br> Sync audio data with other WLEDs');"));  // must append this to the last field of 'sync'
 
