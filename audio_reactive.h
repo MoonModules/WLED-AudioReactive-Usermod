@@ -2361,7 +2361,7 @@ class AudioReactive : public Usermod {
       // sound sync "receive or local"
       bool useNetworkAudio = false;
       if (audioSyncEnabled > AUDIOSYNC_SEND) {  // we are in "receive" or "receive+local" mode
-        if (udpSyncConnected && ((millis() - last_UDPTime) <= AUDIOSYNC_IDLE_MS))
+        if (udpSyncConnected && (receivedFormat > 0) && ((millis() - last_UDPTime) <= AUDIOSYNC_IDLE_MS)) // receivedFormat == 0 means we haven't received valid data yet
           useNetworkAudio = true;
         else
           useNetworkAudio = false;
