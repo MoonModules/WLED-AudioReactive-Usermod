@@ -3354,13 +3354,15 @@ class AudioReactive : public Usermod {
       oappend(SET_F("dd=addDropdown(ux,'sync:check_sequence');"));
       oappend(SET_F("addOption(dd,'Off',0);"));
       oappend(SET_F("addOption(dd,'On',1);"));
-
       oappend(SET_F("addInfo(ux+':sync:check_sequence',1,'<i>when receiving</i>');"));
+
+#ifdef ARDUINO_ARCH_ESP32
       // silence_stop: Sender stops transmitting UDP packets after 30s of continuous silence
       oappend(SET_F("dd=addDropdown(ux,'sync:silence_stop');"));
       oappend(SET_F("addOption(dd,'Off',0);"));
       oappend(SET_F("addOption(dd,'On',1);"));
-      oappend(SET_F("addInfo(ux+':sync:check_sequence',1,'<i>when receiving</i>');"));
+#endif
+
       // broadcast: send to subnet broadcast address instead of multicast
       oappend(SET_F("addInfo(ux+':sync:broadcast',1,'<i>use broadcast instead of multicast</i> ☾<br> Sync audio data with other WLEDs');"));  // must append this to the last field of 'sync'
 
