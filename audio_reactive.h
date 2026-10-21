@@ -1260,6 +1260,7 @@ class AudioReactive : public Usermod {
     bool     initDone = false;
     bool     addPalettes = false;
     int8_t   palettes = 0;
+    bool processingPalettes = false; // poor man's interlock - to prevent that palettes get removed while they are processes
 
     // variables  for UDP sound sync
     WiFiUDP fftUdp;               // UDP object for sound sync (from WiFi UDP, not Async UDP!)
@@ -3393,6 +3394,10 @@ class AudioReactive : public Usermod {
 void AudioReactive::removeAudioPalettes(void) {
 #ifndef _MoonModules_WLED_
   // WLEDMM does not support usermod palettes
+  if (processingPalettes) {
+    USER_PRINTLN(F("Audio palettes are processed - cannot remove."));
+    return;
+  }
   DEBUG_PRINTLN(F("Removing audio palettes."));
   palettes -= (int8_t)removeUsermodPalettes(_name);
   if (palettes < 0) palettes = 0; // safeguard
@@ -3401,7 +3406,7 @@ void AudioReactive::removeAudioPalettes(void) {
 
 void AudioReactive::createAudioPalettes(void) {
 #ifndef _MoonModules_WLED_
-  if (palettes) return;
+  if (palettes || processingPalettes) return;
   DEBUG_PRINTLN(F("Adding audio palettes."));
   static const char *const palNames[MAX_PALETTES] PROGMEM = {_palName0, _palName1, _palName2};
   for (int i=0; i<MAX_PALETTES; i++) {
@@ -3414,10 +3419,10 @@ void AudioReactive::createAudioPalettes(void) {
 #endif
 }
 
-#ifndef _MoonModules_WLED_
 // credit @netmindz ar palette, adapted for usermod @blazoncek
 CRGB AudioReactive::getCRGBForBand(int x, int pal) {
-  CRGB value;
+  CRGB value = CRGB(BLACK);
+#ifndef _MoonModules_WLED_
   CHSV hsv;
   int b;
   switch (pal) {
@@ -3441,13 +3446,14 @@ CRGB AudioReactive::getCRGBForBand(int x, int pal) {
       }
       break;
   }
+#endif
   return value;
 }
-#endif
 
 void AudioReactive::fillAudioPalettes() {
 #ifndef _MoonModules_WLED_
   if (!palettes) return;
+  processingPalettes = true; // lock palettes to ensure they don't get removed while processing
   // Scan by name pointer identity to find the palettes we added, palIndex = 0/1/2... selects the getCRGBForBand variant, matching how the entries were created.
   for (auto &ump : usermodPalettes) {
     if (ump.name != _name) continue;
@@ -3480,6 +3486,7 @@ void AudioReactive::fillAudioPalettes() {
 
     ump.palette.loadDynamicGradientPalette(tcp);
   }
+  processingPalettes = false; // unlock usermodPalettes
 #endif
 }
 
