@@ -28,6 +28,9 @@
    #if !defined(SOC_I2S_SUPPORTS_PDM_RX)
      #define SOC_I2S_SUPPORTS_PDM_RX 1
    #endif
+   #if !defined(SOC_I2S_NUM)
+     #define SOC_I2S_NUM 2
+   #endif
 #endif
 
 #include <driver/i2s.h>
