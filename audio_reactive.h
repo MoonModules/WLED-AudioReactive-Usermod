@@ -43,11 +43,32 @@
   #endif
 #endif
 
-#if !defined(WLEDMM_FASTPATH) && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4))
+#ifdef _MoonModules_WLED_
+#pragma message "building audioreactive V2.0 for WLED-MM" 
+#endif
+
+// sanity checks for MCU capability flags
+#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4)
+	#if !defined(SOC_CPU_HAS_FPU) || (SOC_CPU_CORES_NUM < 2)
+		#error "configuration error - SOC_CPU_HAS_FPU or SOC_CPU_CORES_NUM does not match your MCU"
+	#endif
+	#if !defined(SOC_I2S_SUPPORTS_PDM_RX) && !defined(CONFIG_IDF_TARGET_ESP32P4)
+		#error "configuration error - SOC_I2S_SUPPORTS_PDM_RX does not match your MCU"
+	#endif
+#endif
+#if defined(SOC_I2S_SUPPORTS_PDM_RX) && (defined(__riscv) || defined(CONFIG_IDF_TARGET_ESP32S2)) 
+	#warning "PDM input is not supported yet on your MCU" 
+#endif
+#if defined(SOC_I2S_SUPPORTS_ADC) && (!defined(CONFIG_IDF_TARGET_ESP32) || (ESP_IDF_VERSION_MAJOR > 4))
+	#warning "analog ADC input is not supported yet on your MCU" 
+#endif
+
+
+#if !defined(WLEDMM_FASTPATH) && defined(SOC_CPU_HAS_FPU) && (SOC_CPU_CORES_NUM > 1)
 #warning "please define WLEDMM_FASTPATH for full performance on your board"
 #endif
 
-#if defined(WLEDMM_FASTPATH) && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32P4))
+#if defined(WLEDMM_FASTPATH) && defined(SOC_CPU_HAS_FPU) && (SOC_CPU_CORES_NUM > 1)
 #define FFT_USE_SLIDING_WINDOW             // perform FFT with sliding window =  50% overlap
 #endif
 
