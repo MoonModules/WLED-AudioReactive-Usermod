@@ -15,10 +15,12 @@
 #include <Wire.h>
 #include "wled.h"
 #include <driver/i2s.h>
-#include <driver/adc.h>
+#if (ESP_IDF_VERSION_MAJOR < 5)
 #include <soc/i2s_reg.h>  // needed for SPH0465 timing workaround (classic ESP32)
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+#endif
+#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0))
+#if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
+#include <driver/adc.h>
 #include <driver/adc_deprecated.h>
 #include <driver/adc_types_deprecated.h>
 #endif
@@ -27,6 +29,11 @@
 #else
 #define SRate_t int
 #endif
+
+#if (ESP_IDF_VERSION_MAJOR < 4) || (ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4,4,7)) // backwards compatibility patch
+  #define ADC_ATTEN_DB_12 ADC_ATTEN_DB_11
+#endif
+
 
 constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not change!  I2S_NUM_1 possible but this has 
                                                     // strong limitations -> no MCLK routing, no ADC support, no PDM support
@@ -38,14 +45,14 @@ constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not c
 
 // see https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/chip-series-comparison.html#related-documents
 // and https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/i2s.html#overview-of-all-modes
-#if defined(CONFIG_IDF_TARGET_ESP32C2) || defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2) || defined(ESP8266) || defined(ESP8265)
+#if defined(CONFIG_IDF_TARGET_ESP32C2) || defined(CONFIG_IDF_TARGET_ESP32H2) || defined(ESP8266) || defined(ESP8265) || !defined(SOC_I2S_NUM) || (SOC_I2S_NUM < 1)
   // there are two things in these MCUs that could lead to problems with audio processing:
   // * no floating point hardware (FPU) support - FFT uses float calculations. If done in software, a strong slow-down can be expected (between 8x and 20x)
   // * single core, so FFT task might slow down other things like LED updates
   #if !defined(SOC_I2S_NUM) || (SOC_I2S_NUM < 1)
-  #error This audio reactive usermod does not support ESP32-C2 or ESP32-C3.
+  #error "This audio reactive usermod does not support ESP32-C2 or MCUs without I2S."
   #else
-  #warning This audio reactive usermod does not support ESP32-C2 and ESP32-C3.
+  #warning "This audio reactive usermod does not support your MCU."
   #endif
 #endif
 
@@ -73,12 +80,15 @@ constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not c
 // data type requested from the I2S driver - currently we always use 32bit
 //#define I2S_USE_16BIT_SAMPLES   // (experimental) define this to request 16bit - more efficient but possibly less compatible
 
-#if defined(WLED_ENABLE_HUB75MATRIX) && defined(CONFIG_IDF_TARGET_ESP32)
-  // this is bitter, but necessary to survive
-  #define I2S_USE_16BIT_SAMPLES
-#endif
+//#if defined(WLED_ENABLE_HUB75MATRIX) && defined(CONFIG_IDF_TARGET_ESP32)
+//  // this is bitter, but necessary to survive // disabled - does not work!!
+//  #define I2S_USE_16BIT_SAMPLES
+//#endif
 
 #ifdef I2S_USE_16BIT_SAMPLES
+#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)) // see https://github.com/MoonModules/WLED-MM/issues/333#issuecomment-3910779668
+#error "16bit sampling currently does not work with newer framework versions. Please build without I2S_USE_16BIT_SAMPLES"
+#endif
 #define I2S_SAMPLE_RESOLUTION I2S_BITS_PER_SAMPLE_16BIT
 #define I2S_datatype int16_t
 #define I2S_unsigned_datatype uint16_t
@@ -100,7 +110,7 @@ constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not c
  * if you want to receive two channels, one is the actual data from microphone and another channel is suppose to receive 0, it's different data in two channels, you need to choose I2S_CHANNEL_FMT_RIGHT_LEFT in this case.
 */
 
-#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)) && (ESP_IDF_VERSION <= ESP_IDF_VERSION_VAL(4, 4, 8)) // should be fixed in IDF 4.4.5, however arduino-esp32 2.0.14 - 2.0.17 did an "I2S rollback" to 4.4.4
+#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)) && (ESP_IDF_VERSION <= ESP_IDF_VERSION_VAL(5, 0, 0)) // should be fixed in IDF 4.4.5, however arduino-esp32 2.0.14 - 2.0.17 did an "I2S rollback" to 4.4.4
 // espressif bug: only_left has no sound, left and right are swapped 
 // https://github.com/espressif/esp-idf/issues/9635  I2S mic not working since 4.4 (IDFGH-8138)
 // https://github.com/espressif/esp-idf/issues/8538  I2S channel selection issue? (IDFGH-6918)
@@ -297,7 +307,7 @@ class I2SSource : public AudioSource {
           #warning this MCU does not support PDM microphones
           #endif
         #endif
-        #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+        #if defined(SOC_I2S_SUPPORTS_PDM_RX) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S2)
         // This is an I2S PDM microphone, these microphones only use a clock and
         // data line, to make it simpler to debug, use the WS pin as CLK and SD pin as DATA
         // example from espressif: https://github.com/espressif/esp-idf/blob/release/v4.4/examples/peripherals/i2s/i2s_audio_recorder_sdcard/main/i2s_recorder_main.c
@@ -332,11 +342,11 @@ class I2SSource : public AudioSource {
         // S3: not supported; S2: supported; C3: not supported
         _config.use_apll = false; // APLL not supported on this MCU
       #endif
-      #if defined(ARDUINO_ARCH_ESP32) && !defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3)
+      #if defined(CONFIG_IDF_TARGET_ESP32)
       if (ESP.getChipRevision() == 0) _config.use_apll = false; // APLL is broken on ESP32 revision 0
       #endif
-      #if defined(WLED_ENABLE_HUB75MATRIX)
-        _config.use_apll = false; // APLL needed for HUB75 DMA driver ?
+      #if defined(WLED_USE_ETHERNET) || defined(WLED_ENABLE_HUB75MATRIX)
+        _config.use_apll = false; // APLL is needed for Ethernet, and possibly for HUB75, too
       #endif
 #endif
 
@@ -400,6 +410,7 @@ class I2SSource : public AudioSource {
       }
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
+	  // ToDO: seems that this sometimes reverts PDM timing configuration
       err = i2s_set_clk(AR_I2S_PORT, _sampleRate, I2S_SAMPLE_RESOLUTION, I2S_CHANNEL_MONO);  // set bit clocks. Also takes care of MCLK routing if needed.
       if (err != ESP_OK) {
         ERRORSR_PRINTF("AR: Failed to configure i2s clocks: %d\n", err);
@@ -464,7 +475,7 @@ class I2SSource : public AudioSource {
 
   protected:
     void _routeMclk(int8_t mclkPin) {
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S3)
   // MCLK routing by writing registers is not needed any more with IDF > 4.4.0
   #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 4, 0)
     // this way of MCLK routing only works on "classic" ESP32
@@ -541,7 +552,7 @@ public:
         ERRORSR_PRINTF("\nAR: invalid ES7243 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -673,7 +684,7 @@ class ES8388Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid ES8388 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -850,7 +861,7 @@ class ES8388Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid es8311 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -955,7 +966,7 @@ class WM8978Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid WM8978 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -1059,7 +1070,7 @@ class AC101Source : public I2SSource {
         ERRORSR_PRINTF("\nAR: invalid AC101 global I2C pins: SDA=%d, SCL=%d\n", i2c_sda, i2c_scl); 
         return;
       }
-#ifdef WLEDMM
+#ifdef _MoonModules_WLED_
       if (!ar_joinWire(i2c_sda, i2c_scl)) {    // WLEDMM specific: start I2C with globally defined pins
         ERRORSR_PRINTF("\nAR: failed to join I2C bus with SDA=%d, SCL=%d\n", i2c_sda, i2c_scl);
         return;
@@ -1082,7 +1093,7 @@ class AC101Source : public I2SSource {
 #endif
 #endif
 
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
 // ADC over I2S is only available in "classic" ESP32
 
 /* ADC over I2S Microphone
@@ -1152,7 +1163,7 @@ class I2SAdcSource : public I2SSource {
       }
 
       // see example in https://github.com/espressif/arduino-esp32/blob/master/libraries/ESP32/examples/I2S/HiFreq_ADC/HiFreq_ADC.ino
-      adc1_config_channel_atten(adc1_channel_t(channel), ADC_ATTEN_DB_11);   // configure ADC input amplification
+      adc1_config_channel_atten(adc1_channel_t(channel), ADC_ATTEN_DB_12);   // configure ADC input amplification
 
       #if defined(I2S_GRAB_ADC1_COMPLETELY)
       // according to docs from espressif, the ADC needs to be started explicitly
@@ -1291,12 +1302,12 @@ class SPH0654 : public I2SSource {
     void initialize(int8_t i2swsPin, int8_t i2ssdPin, int8_t i2sckPin, int8_t = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("SPH0654:: initialize();");
       I2SSource::initialize(i2swsPin, i2ssdPin, i2sckPin);
-#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_IDF_TARGET_ESP32) && (ESP_IDF_VERSION_MAJOR < 5)
 // these registers are only existing in "classic" ESP32
       REG_SET_BIT(I2S_TIMING_REG(AR_I2S_PORT), BIT(9));
       REG_SET_BIT(I2S_CONF_REG(AR_I2S_PORT), I2S_RX_MSB_SHIFT);
 #else
-      #warning FIX ME! Please.
+      #pragma message "FIX ME! Maybe."
 #endif
     }
 };
