@@ -2569,7 +2569,8 @@ class AudioReactive : public Usermod {
       if (audioSyncEnabled & AUDIOSYNC_SEND) {
         if (volumeSmth >= 1.0f) syncSilenceStart = 0;           // sound detected - clear silence timer
         else if (syncSilenceStart == 0) syncSilenceStart = millis(); // just went silent - start timer
-      }
+      } else syncSilenceStart = 0;                                   // not in send mode - no silence
+
     #if defined(WLEDMM_FASTPATH)
       if ((audioSyncEnabled & AUDIOSYNC_SEND) && (haveNewFFTResult || (millis() - lastTime > 24))) {  // fastpath: send data once results are ready, or each 25ms as fallback (max sampling time is 23ms)
     #else
@@ -2623,6 +2624,7 @@ class AudioReactive : public Usermod {
       for(int i=(init?0:1); i<NUM_GEQ_CHANNELS; i+=2) fftResult[i] = 16; // make a tiny pattern
       inputLevel = 128;                                    // reset level slider to default
       autoResetPeak();
+	  syncSilenceStart = 0;
 
       if (init && FFT_Task) {
         delay(25);                // WLEDMM: givesome time for I2S driver to finish sampling
