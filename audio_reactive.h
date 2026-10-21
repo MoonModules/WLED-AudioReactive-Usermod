@@ -304,6 +304,7 @@ static volatile float    micReal_max2 = 0.0f;             // MicIn data max afte
 ////////////////////
 
 // some prototypes, to ensure consistent interfaces
+static float my_mapf(float x, float in_min, float in_max, float out_min, float out_max); // map function for float
 static float fftAddAvg(int from, int to);   // average of several FFT result bins
 void FFTcode(void * parameter);             // audio processing task: read samples, run FFT, fill GEQ channels from FFT results
 static void runMicFilter(uint16_t numSamples, float *sampleBuffer);          // pre-filtering of raw samples (band-pass)
@@ -375,7 +376,7 @@ static float filterTime = 0;        // avg time for filtering I2S samples
 // FFT Task variables (filtering and post-processing)
 static float   lastFftCalc[NUM_GEQ_CHANNELS] = {0.0f};                // backup of last FFT channels (before postprocessing)
 
-#if !defined(CONFIG_IDF_TARGET_ESP32C3)
+#if !defined(CONFIG_IDF_TARGET_ESP32C3) && !defined(CONFIG_IDF_TARGET_ESP32C6)
 // audio source parameters and constant
 constexpr SRate_t SAMPLE_RATE = 22050;        // Base sample rate in Hz - 22Khz is a standard rate. Physical sample time -> 23ms
 //constexpr SRate_t SAMPLE_RATE = 16000;        // 16kHz - use if FFTtask takes more than 20ms. Physical sample time -> 32ms
@@ -437,6 +438,11 @@ constexpr float binWidth = SAMPLE_RATE / (float)samplesFFT; // frequency range o
 
 // Helper functions
 
+// float version of map()
+static float my_mapf(float x, float in_min, float in_max, float out_min, float out_max){
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 // compute average of several FFT result bins
 // linear average
 static float fftAddAvgLin(int from, int to) {
@@ -461,7 +467,7 @@ static float fftAddAvg(int from, int to) {
   else return fftAddAvgLin(from, to);              // use linear average
 }
 
-#if defined(CONFIG_IDF_TARGET_ESP32C3)
+#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C6)
 constexpr bool skipSecondFFT = true;
 #else
 constexpr bool skipSecondFFT = false;
@@ -1087,7 +1093,7 @@ static void postProcessFFTResults(bool noiseGateOpen, int numberOfChannels, bool
             if (currentResult > 1.0) currentResult = logf(currentResult); // log to base "e", which is the fastest log() function
             else currentResult = 0.0;                   // special handling, because log(1) = 0; log(0) = undefined
             currentResult *= 0.85f + (float(i)/18.0f);  // extra up-scaling for high frequencies
-            currentResult = mapf(currentResult, 0, LOG_256, 0, 255); // map [log(1) ... log(255)] to [0 ... 255]
+            currentResult = my_mapf(currentResult, 0, LOG_256, 0, 255); // map [log(1) ... log(255)] to [0 ... 255]
         break;
         case 2:
             // Linear scaling
@@ -1105,7 +1111,7 @@ static void postProcessFFTResults(bool noiseGateOpen, int numberOfChannels, bool
             else currentResult = 0.0;                   // special handling, because sqrt(0) = undefined
             currentResult *= 0.85f + (float(i)/4.5f);   // extra up-scaling for high frequencies
             //currentResult *= 0.80f + (float(i)/5.6f); //experiment
-            currentResult = mapf(currentResult, 0.0, 16.0, 0.0, 255.0); // map [sqrt(1) ... sqrt(256)] to [0 ... 255]
+            currentResult = my_mapf(currentResult, 0.0, 16.0, 0.0, 255.0); // map [sqrt(1) ... sqrt(256)] to [0 ... 255]
         break;
 
         case 0:
@@ -1177,6 +1183,14 @@ class AudioReactive : public Usermod {
   private:
 #ifdef ARDUINO_ARCH_ESP32
 
+// HUB75 workaround - audio receive only
+#if defined(WLED_ENABLE_HUB75MATRIX) && (defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2))
+  #ifdef SR_DMTYPE
+    #undef SR_DMTYPE
+    #warning "HUB75 classic ESP32 builds do not work reliably with I2S microphones. Changing default MIC type to network receive only"
+  #endif
+  #define SR_DMTYPE 254  // "network receive only"
+#endif
     #ifndef AUDIOPIN
     int8_t audioPin = -1;
     #else
@@ -2945,9 +2959,9 @@ class AudioReactive : public Usermod {
       poweruser[F("freqDist")] = freqDist;
       //poweruser[F("freqRMS")] = averageByRMS;
       poweruser[F("FFT_Window")] = fftWindow;
-#ifdef FFT_USE_SLIDING_WINDOW
+      #ifdef FFT_USE_SLIDING_WINDOW
       poweruser[F("I2S_FastPath")] = doSlidingFFT;
-#endif
+      #endif
       JsonObject freqScale = top.createNestedObject("frequency");
       freqScale[F("scale")] = FFTScalingMode;
       freqScale[F("profile")] = pinkIndex; //WLEDMM
