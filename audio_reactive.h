@@ -1316,7 +1316,7 @@ class AudioReactive : public Usermod {
     bool     initDone = false;
     bool     addPalettes = false;
     int8_t   palettes = 0;
-    bool processingPalettes = false; // poor man's interlock - to prevent that palettes get removed while they are processes
+    bool processingPalettes = false; // poor man's interlock - to prevent that palettes get removed while they are processed
 
     // variables  for UDP sound sync
     WiFiUDP fftUdp;               // UDP object for sound sync (from WiFi UDP, not Async UDP!)
