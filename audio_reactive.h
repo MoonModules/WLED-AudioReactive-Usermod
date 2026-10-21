@@ -132,8 +132,8 @@
   #define PLOT_FLUSH()
 #endif
 
-// sanity checks
-#ifdef ARDUINO_ARCH_ESP32
+// sanity checks - only needed for WLED-MM
+#if defined(ARDUINO_ARCH_ESP32) && defined(_MoonModules_WLED_)
   // we need more space in for oappend() stack buffer -> SETTINGS_STACK_BUF_SIZE and CONFIG_ASYNC_TCP_STACK_SIZE
   #if SETTINGS_STACK_BUF_SIZE < 3904    // 3904 is required for WLEDMM-0.14.0-b28
     #warning please increase SETTINGS_STACK_BUF_SIZE >= 3904
