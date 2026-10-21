@@ -10,10 +10,25 @@
 
 */
 
-
 #include "wled.h"
 
 #ifdef ARDUINO_ARCH_ESP32
+
+// backwards compatibility hacks for esp-idf v3
+#if (ESP_IDF_VERSION_MAJOR < 4) && defined(CONFIG_IDF_TARGET_ESP32) && !defined(SOC_CPU_HAS_FPU)
+   #if !defined(SOC_CPU_HAS_FPU)
+     #define SOC_CPU_HAS_FPU 1
+   #endif
+   #if !defined(SOC_CPU_CORES_NUM)
+     #define SOC_CPU_CORES_NUM 2
+   #endif
+   #if !defined(SOC_I2S_SUPPORTS_ADC)
+     #define SOC_I2S_SUPPORTS_ADC 1
+   #endif
+   #if !defined(SOC_I2S_SUPPORTS_PDM_RX)
+     #define SOC_I2S_SUPPORTS_PDM_RX 1
+   #endif
+#endif
 
 #include <driver/i2s.h>
 #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
