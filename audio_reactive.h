@@ -203,6 +203,11 @@ static volatile bool isOOM = false;                       // FFTask: not enough 
 #define NUM_GEQ_CHANNELS 16                               // number of frequency channels. Don't change !!
 #define MAX_PALETTES 5                                    // number of audioreactive palettes provided by this usermod
 
+// helper functions
+static float my_mapf(float x, float in_min, float in_max, float out_min, float out_max){ // float version of map()
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 // audioreactive variables
 #ifdef ARDUINO_ARCH_ESP32
 #ifndef SR_AGC // Automatic gain control mode
@@ -269,7 +274,6 @@ static void detectSamplePeak(void);  // peak detection function (needs scaled FF
 static void autoResetPeak(void);     // peak auto-reset function
 static uint8_t maxVol = 31;          // (was 10) Reasonable value for constant volume for 'peak detector', as it won't always trigger  (deprecated)
 static uint8_t binNum = 8;           // Used to select the bin for FFT based beat detection  (deprecated)
-
 #ifdef ARDUINO_ARCH_ESP32
 
 // use audio source class (ESP32 specific)
@@ -357,7 +361,6 @@ static volatile float    micReal_max2 = 0.0f;             // MicIn data max afte
 ////////////////////
 
 // some prototypes, to ensure consistent interfaces
-static float my_mapf(float x, float in_min, float in_max, float out_min, float out_max); // map function for float
 static float fftAddAvg(int from, int to);   // average of several FFT result bins
 void FFTcode(void * parameter);             // audio processing task: read samples, run FFT, fill GEQ channels from FFT results
 static void runMicFilter(uint16_t numSamples, float *sampleBuffer);          // pre-filtering of raw samples (band-pass)
@@ -490,12 +493,6 @@ constexpr float binWidth = SAMPLE_RATE / (float)samplesFFT; // frequency range o
 #include <arduinoFFT.h>
 
 // Helper functions
-
-// float version of map()
-static float my_mapf(float x, float in_min, float in_max, float out_min, float out_max){
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
 // compute average of several FFT result bins
 // linear average
 static float fftAddAvgLin(int from, int to) {
@@ -3615,7 +3612,10 @@ void AudioReactive::fillAudioPalettes() {
   unsigned long dtMs = lastPaletteTime ? (now - lastPaletteTime) : 20UL;
   lastPaletteTime = now;
   if (dtMs > 2000UL) dtMs = 2000UL; // cap a single "catch-up" jump after a long stall (OTA, file I/O)
-  float alpha = (float)dtMs / (PALETTE_TIME_CONSTANT_MS + (float)dtMs);
+
+  float alpha = (float)dtMs / (PALETTE_TIME_CONSTANT_MS + (float)dtMs);  // approximation
+  // float alpha = 1.0f - expf(-(float)dtMs / PALETTE_TIME_CONSTANT_MS); // (optional) exact value - better to preserve the time constant across loop cadences.
+
   for (int i = 0; i < NUM_GEQ_CHANNELS; i++) {
     paletteBandAvg[i] += alpha * ((float)fftResult[i] - paletteBandAvg[i]);
   }
@@ -3625,7 +3625,11 @@ void AudioReactive::fillAudioPalettes() {
   // the 3 getCRGBForBand() calls (x=1/128/255) made below for every refresh.
   {
     // Palette 3 ("Track Character"): spectral centroid → hue
-    static const float bandFreq[NUM_GEQ_CHANNELS] = {       // approximate centre frequency (Hz) of each GEQ channel
+    // ToDO: This fixed frequency table does not match all supported FFT mappings. 
+    //     With freqDist=1, channel 9 receives fftAddAvg(19,25) (about 950 Hz at 22.05 kHz), but this table weights it as 1658 Hz. 
+    //     Track Character therefore overestimates the spectral centroid and shifts the hue.
+    //     Additionally, check if RMS bin averaging can move the central frequencies.
+    static const float bandFreq[NUM_GEQ_CHANNELS] = {       // approximate centre frequency (Hz) of each GEQ channel - need rework to match the frequency mappings of WLED-MM
       65, 107, 172, 258, 365, 495, 689, 969,
       1270, 1658, 2153, 2713, 3359, 4091, 5792, 8182
     };
