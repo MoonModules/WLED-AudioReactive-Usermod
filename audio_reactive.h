@@ -189,7 +189,11 @@
 #define AUDIOSYNC_SEND 0x01      // UDP sound sync - send mode
 #define AUDIOSYNC_REC  0x02      // UDP sound sync - receiver mode
 #define AUDIOSYNC_REC_PLUS 0x06  // UDP sound sync - receiver + local mode (uses local input if no receiving udp sound)
-#define AUDIOSYNC_IDLE_MS  2500  // timeout for "receiver idle" (milliseconds) 
+// adiosync timeouts (milliseconds)
+#define AUDIOSYNC_IDLE_MS       2500U   // timeout for "receiver idle" -> mode 6 switches back to local audio
+#define AUDIOSYNC_REC_DEAD_MS  25000U   // timeout for "receiver reconnect"
+#define AUDIOSYNC_SEND_STOP_MS 30000U   // timeout until "silence stop"
+ 
 
 static volatile bool disableSoundProcessing = false;      // if true, sound processing (FFT, filters, AGC) will be suspended. "volatile" as it is shared between tasks.
 static uint8_t audioSyncEnabled = AUDIOSYNC_NONE;         // bit field: bit 0 - send, bit 1 - receive, bit 2 - use local if not receiving
@@ -2542,7 +2546,7 @@ class AudioReactive : public Usermod {
       if (   (audioSyncEnabled & AUDIOSYNC_REC) // receive mode
           && udpSyncConnected          // connected
           && (receivedFormat > 0)      // we actually received something in the past
-          && ((millis() - last_UDPTime) > 25000)) {   // close connection after 25sec idle
+          && ((millis() - last_UDPTime) > AUDIOSYNC_REC_DEAD_MS)) {   // close connection after 25sec idle
         udpSyncConnected = false;
         receivedFormat = 0;
         fftUdp.stop();
@@ -2601,7 +2605,7 @@ class AudioReactive : public Usermod {
         haveNewFFTResult = false; // reset notification
         // Only run the transmit code IF we're in Transmit mode
         // Sender silence gate: skip transmission when silence has persisted for more than 30 seconds
-        if (!audioSyncSilenceStop || (syncSilenceStart == 0) || (millis() - syncSilenceStart < 30000UL)) {
+        if (!audioSyncSilenceStop || (syncSilenceStart == 0) || (millis() - syncSilenceStart < AUDIOSYNC_SEND_STOP_MS)) {
           transmitAudioData();
         }
         lastTime = millis();
@@ -2809,8 +2813,10 @@ class AudioReactive : public Usermod {
           if (udpSyncConnected) {
             if (millis() - last_UDPTime < AUDIOSYNC_IDLE_MS)
               infoArr.add(F(" - receiving"));
-            else
-              infoArr.add(F(" - idle"));
+            else {
+			  if(millis() - last_UDPTime) > AUDIOSYNC_REC_DEAD_MS) infoArr.add(F(" - reconnect"))
+              else infoArr.add(F(" - idle"));
+			}
           } else {
             infoArr.add(F(" - no connection"));
           }
@@ -2876,7 +2882,7 @@ class AudioReactive : public Usermod {
           if (audioSyncEnabled & AUDIOSYNC_SEND) {
             infoArr.add(F("send mode"));
             if ((udpSyncConnected) && (millis() - lastTime < AUDIOSYNC_IDLE_MS)) {
-              if (audioSyncSilenceStop && (syncSilenceStart > 0) && unsigned(millis() - syncSilenceStart) > 30000UL)
+              if (audioSyncSilenceStop && (syncSilenceStart > 0) && unsigned(millis() - syncSilenceStart) > AUDIOSYNC_SEND_STOP_MS)
                 infoArr.add(F(" (silence)"));
               else
                 infoArr.add(F(" v2+"));
@@ -2889,7 +2895,7 @@ class AudioReactive : public Usermod {
         } else
           infoArr.add("off");
 
-        if (audioSyncEnabled && udpSyncConnected && unsigned(millis() - last_UDPTime) > 25000) infoArr.add(" <i>(reconnecting)</i>");
+        if (audioSyncEnabled && udpSyncConnected && unsigned(millis() - last_UDPTime) > AUDIOSYNC_REC_DEAD_MS) infoArr.add(" <i>(reconnecting)</i>");
         else if (audioSyncEnabled && !udpSyncConnected) infoArr.add(" <i>(unconnected)</i>");
         if (audioSyncEnabled && udpSyncConnected && (millis() - last_UDPTime < AUDIOSYNC_IDLE_MS)) {
             if (receivedFormat == 1) infoArr.add(F(" v1"));
