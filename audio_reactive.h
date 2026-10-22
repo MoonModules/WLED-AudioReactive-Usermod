@@ -3586,6 +3586,7 @@ static float getRawBand(unsigned band) {
   if (band >= NUM_GEQ_CHANNELS) return 0.0f; // out of range
 
 #if 1 // experimental - only works for local audio
+ #ifdef ARDUINO_ARCH_ESP32 // no local audio on 8266
   if (audioSource && !disableSoundProcessing) {  // use high quality data if we can
     // start with filtered or unfiltered raw data, depending on limiter settings
     float currentResult = limiterOn ? fftAvg[band] : fftCalc[band];
@@ -3596,6 +3597,7 @@ static float getRawBand(unsigned band) {
     // clamp to target range
     return max(min(currentResult, 255.0f), 0.0f);
   } else 
+ #endif
 #endif
     return float(fftResult[band]);               // fall back to UDP sound data
 }
