@@ -2814,7 +2814,7 @@ class AudioReactive : public Usermod {
             if (millis() - last_UDPTime < AUDIOSYNC_IDLE_MS)
               infoArr.add(F(" - receiving"));
             else {
-              if((millis() - last_UDPTime) > AUDIOSYNC_REC_DEAD_MS) infoArr.add(F(" - reconnect"));
+              if((last_UDPTime > 0) && (millis() - last_UDPTime) > AUDIOSYNC_REC_DEAD_MS) infoArr.add(F(" - reconnect"));
               else infoArr.add(F(" - idle"));
 			}
           } else {
