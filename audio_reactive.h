@@ -2908,32 +2908,38 @@ class AudioReactive : public Usermod {
 
         #if defined(WLED_DEBUG) || defined(SR_DEBUG) || defined(SR_STATS)
         #ifdef ARDUINO_ARCH_ESP32
-        infoArr = user.createNestedArray(F("I2S cycle time"));
-        infoArr.add(roundf(fftTaskCycle)/100.0f);
-        infoArr.add(" ms");
 
         infoArr = user.createNestedArray(F("Sampling time"));
         infoArr.add(roundf(sampleTime)/100.0f);
         infoArr.add(" ms");
+        if (!disableSoundProcessing) {                                       // FFTTask timing
+          infoArr = user.createNestedArray(F("I2S cycle time"));
+          infoArr.add(roundf(fftTaskCycle)/100.0f);
+          infoArr.add(" ms");
 
-        infoArr = user.createNestedArray(F("Filtering time"));
-        infoArr.add(roundf(filterTime)/100.0f);
-        infoArr.add(" ms");
+          infoArr = user.createNestedArray(F("Sampling time"));
+          infoArr.add(roundf(sampleTime)/100.0f);
+          infoArr.add(" ms");
 
-        infoArr = user.createNestedArray(F("FFT time"));
-        infoArr.add(roundf(fftTime)/100.0f);
+          infoArr = user.createNestedArray(F("Filtering time"));
+          infoArr.add(roundf(filterTime)/100.0f);
+          infoArr.add(" ms");
+
+          infoArr = user.createNestedArray(F("FFT time"));
+          infoArr.add(roundf(fftTime)/100.0f);
 
 #ifdef FFT_USE_SLIDING_WINDOW
-        unsigned timeBudget = doSlidingFFT ? (FFT_MIN_CYCLE) : fftTaskCycle / 115;
+          unsigned timeBudget = doSlidingFFT ? (FFT_MIN_CYCLE) : fftTaskCycle / 115;
 #else
-        unsigned timeBudget = (FFT_MIN_CYCLE);
+          unsigned timeBudget = (FFT_MIN_CYCLE);
 #endif
-        if ((fftTime/100) >= timeBudget) // FFT time over budget -> I2S buffer will overflow 
-          infoArr.add("<b style=\"color:red;\">! ms</b>");
-        else if ((fftTime/85 + filterTime/85 + sampleTime/85) >= timeBudget) // FFT time >75% of budget -> risk of instability
-          infoArr.add("<b style=\"color:orange;\"> ms!</b>");
-        else
-          infoArr.add(" ms");
+          if ((fftTime/100) >= timeBudget) // FFT time over budget -> I2S buffer will overflow 
+            infoArr.add("<b style=\"color:red;\">! ms</b>");
+          else if ((fftTime/85 + filterTime/85 + sampleTime/85) >= timeBudget) // FFT time >75% of budget -> risk of instability
+            infoArr.add("<b style=\"color:orange;\"> ms!</b>");
+          else
+            infoArr.add(" ms");
+        }
 
         DEBUGSR_PRINTF("AR I2S cycle time: %5.2f ms\n", roundf(fftTaskCycle)/100.0f);
         DEBUGSR_PRINTF("AR Sampling time : %5.2f ms\n", roundf(sampleTime)/100.0f);
