@@ -2875,7 +2875,12 @@ class AudioReactive : public Usermod {
         if (audioSyncEnabled) {
           if (audioSyncEnabled & AUDIOSYNC_SEND) {
             infoArr.add(F("send mode"));
-            if ((udpSyncConnected) && (millis() - lastTime < AUDIOSYNC_IDLE_MS)) infoArr.add(F(" v2+"));
+            if ((udpSyncConnected) && (millis() - lastTime < AUDIOSYNC_IDLE_MS)) {
+              if (audioSyncSilenceStop && (syncSilenceStart > 0) && unsigned(millis() - syncSilenceStart) > 30000UL)
+                infoArr.add(F(" (silence)"));
+              else
+                infoArr.add(F(" v2+"));
+            }
           } else if (audioSyncEnabled == AUDIOSYNC_REC) {
               infoArr.add(F("receive mode"));
           } else if (audioSyncEnabled == AUDIOSYNC_REC_PLUS) {
@@ -2883,7 +2888,9 @@ class AudioReactive : public Usermod {
           }
         } else
           infoArr.add("off");
-        if (audioSyncEnabled && !udpSyncConnected) infoArr.add(" <i>(unconnected)</i>");
+
+        if (audioSyncEnabled && udpSyncConnected && unsigned(millis() - last_UDPTime) > 25000) infoArr.add(" <i>(reconnecting)</i>");
+        else if (audioSyncEnabled && !udpSyncConnected) infoArr.add(" <i>(unconnected)</i>");
         if (audioSyncEnabled && udpSyncConnected && (millis() - last_UDPTime < AUDIOSYNC_IDLE_MS)) {
             if (receivedFormat == 1) infoArr.add(F(" v1"));
             if (receivedFormat == 2) infoArr.add(F(" v2"));
