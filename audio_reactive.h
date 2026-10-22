@@ -2906,7 +2906,6 @@ class AudioReactive : public Usermod {
             }
         }
 
-        #if defined(WLED_DEBUG) || defined(SR_DEBUG) || defined(SR_STATS)
         #ifdef ARDUINO_ARCH_ESP32
 
         if (!disableSoundProcessing && (audioSyncEnabled & AUDIOSYNC_SEND)) { // send mode idle time
@@ -2922,6 +2921,8 @@ class AudioReactive : public Usermod {
           infoArr.add(noUDPtime/1000);
           infoArr.add(" sec");
         }
+
+        #if defined(WLED_DEBUG) || defined(SR_DEBUG) || defined(SR_STATS)
 
         if (!disableSoundProcessing) {                                       // FFTTask timing
           infoArr = user.createNestedArray(F("I2S cycle time"));
