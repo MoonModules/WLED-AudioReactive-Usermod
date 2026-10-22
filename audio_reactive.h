@@ -2909,9 +2909,20 @@ class AudioReactive : public Usermod {
         #if defined(WLED_DEBUG) || defined(SR_DEBUG) || defined(SR_STATS)
         #ifdef ARDUINO_ARCH_ESP32
 
-        infoArr = user.createNestedArray(F("Sampling time"));
-        infoArr.add(roundf(sampleTime)/100.0f);
-        infoArr.add(" ms");
+        if (!disableSoundProcessing && (audioSyncEnabled & AUDIOSYNC_SEND)) { // send mode idle time
+          unsigned silencetime = 0;
+          if (syncSilenceStart > 0) silencetime = millis() - syncSilenceStart;
+          infoArr = user.createNestedArray(F("Sound silence"));
+          infoArr.add(silencetime/1000);
+          infoArr.add(" sec");
+        } else if (audioSyncEnabled) {                                        // receive mode idle time
+          unsigned noUDPtime = 0;
+          if (last_UDPTime > 0) noUDPtime = millis() - last_UDPTime;
+          infoArr = user.createNestedArray(F("Sound receive idle"));
+          infoArr.add(noUDPtime/1000);
+          infoArr.add(" sec");
+        }
+
         if (!disableSoundProcessing) {                                       // FFTTask timing
           infoArr = user.createNestedArray(F("I2S cycle time"));
           infoArr.add(roundf(fftTaskCycle)/100.0f);
