@@ -3542,6 +3542,26 @@ void AudioReactive::createAudioPalettes(void) {
 #endif
 }
 
+
+// little helper for Audio palettes - get higher quality data if we can
+static float getRawBand(unsigned band) {
+  if (band >= NUM_GEQ_CHANNELS) return 0.0f; // out of range
+
+#if 1 // experimental - only works for local audio
+  if (audioSource && !disableSoundProcessing) {  // use high quality data if we can
+    // start with filtered or unfiltered raw data, depending on limiter settings
+    float currentResult = limiterOn ? fftAvg[band] : fftCalc[band];
+    // Apply linear scaling
+    currentResult *= 0.32f;                      // some damping to get values below 255
+    if (currentResult < 1.0f) currentResult = 0.0f;
+    //currentResult *= 0.85f + (float(band)/1.8f); // extra up-scaling for high frequencies
+    // clamp to target range
+    return max(min(currentResult, 255.0f), 0.0f);
+  } else 
+#endif
+    return float(fftResult[band]);               // fall back to UDP sound data
+}
+
 // credit @netmindz ar palette, adapted for usermod @blazoncek
 CRGB AudioReactive::getCRGBForBand(int x, int pal) {
   CRGB value = CRGB(BLACK);
