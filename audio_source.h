@@ -25,6 +25,7 @@
 #include <driver/adc_types_deprecated.h>
 #endif
 // type of i2s_config_t.SampleRate was changed from "int" to "unsigned" in IDF 4.4.x
+// also matches i2s_std_clk_config_t.sample_rate_hz of the IDF V5 driver
 #define SRate_t uint32_t
 #else
 #define SRate_t int
@@ -34,6 +35,14 @@
   #define ADC_ATTEN_DB_12 ADC_ATTEN_DB_11
 #endif
 
+#ifndef I2S_PIN_NO_CHANGE
+#define I2S_PIN_NO_CHANGE (-1)  // common "pin unused" marker (not defined in IDF V5 driver so define it here)
+#endif
+
+// IDF V5 renamed the PDM RX slot config macro (raw PDM format support) - map back to the classic name
+#if (ESP_IDF_VERSION_MAJOR >= 5) && !defined(I2S_PDM_RX_SLOT_DEFAULT_CONFIG) && defined(I2S_PDM_RX_SLOT_PCM_FMT_DEFAULT_CONFIG)
+#define I2S_PDM_RX_SLOT_DEFAULT_CONFIG I2S_PDM_RX_SLOT_PCM_FMT_DEFAULT_CONFIG
+#endif
 
 constexpr i2s_port_t AR_I2S_PORT = I2S_NUM_0;       // I2S port to use (do not change!  I2S_NUM_1 possible but this has 
                                                     // strong limitations -> no MCLK routing, no ADC support, no PDM support
@@ -1297,7 +1306,9 @@ class SPH0654 : public I2SSource {
   public:
     SPH0654(SRate_t sampleRate, int blockSize, float sampleScale = 1.0f, bool i2sMaster=true) :
       I2SSource(sampleRate, blockSize, sampleScale, i2sMaster)
-    {}
+    {
+      // SPH0645 sends MSB format (no 1-bit shift like Philips STD) - to be handled by the slot config
+    }
 
     void initialize(int8_t i2swsPin, int8_t i2ssdPin, int8_t i2sckPin, int8_t = I2S_PIN_NO_CHANGE) {
       DEBUGSR_PRINTLN("SPH0654:: initialize();");
