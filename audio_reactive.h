@@ -3600,7 +3600,7 @@ static float getRawBand(unsigned band) {
 #endif
   { // fall back to UDP sound data
     float currentResult = float(fftResult[band]);
-    float scalingEstimate = 0.85f + (float(band)/3.8f);  // we don't know the sender's scaling mode - this de-amp step just brings back the original shape and it colse to the default sqrt() scaling.
+    float scalingEstimate = 0.85f + (float(band)/3.8f);  // we don't know the sender's scaling mode - this de-amp step just brings back the original shape, close to the default sqrt() scaling.
     return min(currentResult / scalingEstimate, 278.0f); // allow slight overshooting beyond 255
   }
 }
