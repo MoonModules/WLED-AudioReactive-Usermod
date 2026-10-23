@@ -3778,14 +3778,22 @@ void AudioReactive::fillAudioPalettes() {
     // Reuses tEnergy (== bassEnergy+midEnergy+highEnergy, since channels 0-15 are already
     // summed above) as the total instead of re-summing it, to avoid two full 16-channel
     // sums doing the same addition per refresh.
+    // Palette 4 ("Spectral Balance"): bass/mid/high balance → hue.
     float bassEnergy = 0, midEnergy = 0, highEnergy = 0;
     for (int i = 0;  i < 4;  i++) bassEnergy += paletteBandAvg[i];  // sub-bass + bass
     for (int i = 4;  i < 10; i++) midEnergy  += paletteBandAvg[i];  // midrange
     for (int i = 10; i < 16; i++) highEnergy += paletteBandAvg[i];  // high-mid + high
-    float total = (tEnergy < 1.0f) ? 1.0f : tEnergy;          // avoid division by zero when silent
-    float bassRatio = bassEnergy / total;                     // fraction of energy in bass band
-    float midRatio  = midEnergy  / total;
-    float highRatio = highEnergy / total;
+    // Compare average channel levels rather than sums: the groups contain 4, 6, and 6
+    // channels, so raw sums systematically over-weight mid and high content.
+    bassEnergy /= 4.0f;
+    midEnergy  /= 6.0f;
+    highEnergy /= 2.5f; // give treble a stronger influence on the hue
+    float bandTotal = bassEnergy + midEnergy + highEnergy;
+    float bandTotalSafe = (bandTotal < 1.0f) ? 1.0f : bandTotal; // avoid division by zero when silent
+    float total = (tEnergy < 1.0f) ? 1.0f : tEnergy; // retain total FFT energy for brightness
+    float bassRatio = bassEnergy / bandTotalSafe;
+    float midRatio  = midEnergy  / bandTotalSafe;
+    float highRatio = highEnergy / bandTotalSafe;
     // Weighted hue: pure bass→20, pure mid→110, pure high→190
     int weightedHue = (int)roundf(bassRatio * 20.0f + midRatio * 110.0f + highRatio * 190.0f);
     weightedHue = 110 + (int)roundf(conf * (float)(weightedHue - 110)); // fade to neutral (mid) hue when silent
