@@ -3591,15 +3591,18 @@ static float getRawBand(unsigned band) {
     // start with filtered or unfiltered raw data, depending on limiter settings
     float currentResult = limiterOn ? fftAvg[band] : fftCalc[band];
     // Apply linear scaling
-    currentResult *= 0.32f;                      // some damping to get values below 255
+    currentResult *= 0.27f;                      // some damping to get values below 255
     if (currentResult < 1.0f) currentResult = 0.0f;
-    //currentResult *= 0.85f + (float(band)/1.8f); // extra up-scaling for high frequencies
     // clamp to target range
-    return max(min(currentResult, 255.0f), 0.0f);
+    return min(currentResult, 278.0f); // allow slight overshooting beyond 255
   } else 
  #endif
 #endif
-    return float(fftResult[band]);               // fall back to UDP sound data
+  { // fall back to UDP sound data
+    float currentResult = float(fftResult[band]);
+    float scalingEstimate = 0.85f + (float(band)/2.2f);  // we don't know the sender's scaling mode - this de-amp curve just brings back the original shape (but not reverting ln() or sqrt() itself)
+    return min(currentResult / scalingEstimate, 278.0f); // allow slight overshooting beyond 255
+  }
 }
 
 // credit @netmindz ar palette, adapted for usermod @blazoncek
