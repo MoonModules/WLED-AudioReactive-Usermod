@@ -3672,7 +3672,7 @@ CRGB AudioReactive::getCRGBForBand(int x, int pal) {
       // scale as any individual band - see paletteSat3's comment for why AVERAGE rather than
       // the raw SUM in paletteTotal4 is used as the loudness reference) and palette position
       float avgEnergy4 = paletteTotal4 / (float)NUM_GEQ_CHANNELS;
-      uint8_t val = (uint8_t)constrain((int)my_mapf(avgEnergy4, 0.0f, 255.0f, 0.0f, 100.0f) + (int)map(x, 0, 255, 30, 255), 30, 255);
+      uint8_t val = (uint8_t)constrain((int)my_mapf(avgEnergy4, 0.0f, 70.0f, 0.0f, 100.0f) + (int)map(x, 0, 255, 30, 255), 30, 255); // original input for avgEnergy4: 0.0f, 255.0f
       hsv = CHSV(hue, paletteSat4, val);
       value = hsv;
       break;
@@ -3749,14 +3749,21 @@ void AudioReactive::fillAudioPalettes() {
     //        Smoothing the band energies therefore does not prevent an abrupt color change at silence. 
     //        --> Retain the last valid hue below the threshold, or smooth the transition to the fallback hue.
     //        --> filter/smooth transitions
-    float centroid = (tEnergy > 1.0f) ? (wSum / tEnergy) : 500.0f;
+    //   float centroid = (tEnergy > 1.0f) ? (wSum / tEnergy) : 500.0f; // original formula
+    float conf = tEnergy / (tEnergy + 16.0f); // confidence: ~0 when (nearly) silent, ->1 for real signals. Fades towards neutral hues instead of jumping.
+    float centroid = (tEnergy > 0.001f) ? (wSum / tEnergy) : 500.0f;
+
     // Map centroid to hue on a log scale (human pitch perception is logarithmic).
     // ln(60 Hz) ≈ 4.0943, ln(8000 Hz) ≈ 8.9872 → hue range 0..200 (red → blue-purple).
     // Using logf() rather than log2f() avoids pulling in a second libm log function;
     // logf() is already linked into this file elsewhere. Bounds are rounded outward so
     // mapf()'s result can't go slightly negative.
-    float logC = logf(constrain(centroid, 60.0f, 8000.0f));
-    paletteHue3 = (uint8_t)my_mapf(logC, 4.0943f, 8.9872f, 0.0f, 200.0f); // mapf() cannot produce negative results due to previous constrain() --> safe to directly cast to uint8_t
+    //   float logC = logf(constrain(centroid, 60.0f, 8000.0f)); // original formula
+    //   paletteHue3 = (uint8_t)my_mapf(logC, 4.0943f, 8.9872f, 0.0f, 200.0f); // mapf() cannot produce negative results due to previous constrain() --> safe to directly cast to uint8_t
+    // range 110..4000 Hz (ln = 4.7005 .. 8.2940); hue 84 = neutral (500 Hz)
+    float logC = logf(constrain(centroid, 110.0f, 4000.0f));
+    float hue3 = my_mapf(logC, 4.7005f, 8.2940f, 0.0f, 200.0f);
+    paletteHue3 = (uint8_t)constrain((int)(84.0f + conf * (hue3 - 84.0f) + 0.5f), 0, 200);
     // Saturation rises with overall loudness. tEnergy is the SUM of 16 EMA'd bands, so its
     // theoretical ceiling is 16*255=4080 - but real music never drives all 16 log-spaced
     // bands to full scale simultaneously, so scaling against that ceiling pins saturation
@@ -3765,7 +3772,7 @@ void AudioReactive::fillAudioPalettes() {
     // in this file (e.g. the `case 1`/`case 2` palettes above), so saturation actually
     // varies across a musically realistic loudness range.
     float avgEnergy3 = tEnergy / (float)NUM_GEQ_CHANNELS;
-    paletteSat3 = (uint8_t)constrain((int)my_mapf(avgEnergy3, 0.0f, 255.0f, 180.0f, 255.0f), 180, 255);
+    paletteSat3 = (uint8_t)constrain((int)my_mapf(avgEnergy3, 0.0f, 70.0f, 180.0f, 255.0f), 180, 255); // original input for avgEnergy3: 0.0f, 255.0f
 
     // Palette 4 ("Spectral Balance"): bass/mid/high energy ratio → hue.
     // Reuses tEnergy (== bassEnergy+midEnergy+highEnergy, since channels 0-15 are already
@@ -3781,13 +3788,15 @@ void AudioReactive::fillAudioPalettes() {
     float highRatio = highEnergy / total;
     // Weighted hue: pure bass→20, pure mid→110, pure high→190
     int weightedHue = (int)roundf(bassRatio * 20.0f + midRatio * 110.0f + highRatio * 190.0f);
+    weightedHue = 110 + (int)roundf(conf * (float)(weightedHue - 110)); // fade to neutral (mid) hue when silent
     paletteHue4 = (uint8_t)constrain(weightedHue, 0, 255);
     // Saturation: a clearly dominant band → high sat; a balanced spectrum → lower sat.
     // maxRatio is the max of three ratios that sum to 1, so its real range is [1/3, 1],
     // not [0, 1]; map that actual range onto [180, 255] instead of an arbitrary factor,
     // so saturation actually varies instead of floor/ceiling-clamping almost always.
     float maxRatio = fmaxf(bassRatio, fmaxf(midRatio, highRatio));
-    paletteSat4 = (uint8_t)constrain((int)my_mapf(maxRatio, 1.0f/3.0f, 1.0f, 180.0f, 255.0f), 180, 255);
+    // paletteSat4 = (uint8_t)constrain((int)my_mapf(maxRatio, 1.0f/3.0f, 1.0f, 180.0f, 255.0f), 180, 255); // original formula
+    paletteSat4 = (uint8_t)constrain((int)(my_mapf(maxRatio, 0.35f, 0.75f, 180.0f, 255.0f) * conf + 180.0f * (1.0f - conf)), 180, 255);
     paletteTotal4 = total;
   }
   // AI: end
