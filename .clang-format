@@ -8,18 +8,31 @@
 # Requires clang-format 16+ (AlignTrailingComments' Kind-based syntax below
 # needs it). Verified to parse cleanly on clang-format 16, 18 and 22.
 BasedOnStyle: Google
+TabWidth: 2
+UseTab: Never                                        # always use spaces, no tabs
 ColumnLimit: 240                                     # WLED convention: wide lines, not the 80-col default
 AlignTrailingComments: Leave                         # preserves existing comment-column alignment; forcing "Never" re-collapses spacing on every touched line, breaking alignment with untouched neighbours
+# optional: use this if you prefer to see all in-line comments aligned to each other
+#AlignTrailingComments:
+#  Kind: Always
+#  OverEmptyLines: 2 
 AllowShortCaseLabelsOnASingleLine: true              # matches the `case X: doThing(); break;` style used throughout
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+  AlignCaseColons: false
+AlignConsecutiveMacros: Consecutive
 AllowShortFunctionsOnASingleLine: Inline             # keeps short wrapper/getter functions on one line, closer to existing code than Google's stricter default
 AllowShortIfStatementsOnASingleLine: AllIfsAndElse   # un-deprecates the old "Always" value used before; matches existing single-line if/else usage
 BreakConstructorInitializers: BeforeComma            # non-deprecated replacement for BreakConstructorInitializersBeforeComma
 InsertNewlineAtEOF: true                             # text files should end with a newline
-KeepEmptyLinesAtTheStartOfBlocks: true                # deliberately kept in its deprecated spelling: the modern nested "KeepEmptyLines" key errors out on clang-format 16 and 18, and CodeRabbit's suggested "KeepEmptyLinesAtTopOfFunctions" is an unknown key on 14/16/18/22 alike. This old alias parses cleanly on all of them.
+KeepEmptyLinesAtTheStartOfBlocks: true               # deliberately kept in its deprecated spelling: the modern nested "KeepEmptyLines" key errors out on clang-format 16 and 18, and CodeRabbit's suggested "KeepEmptyLinesAtTopOfFunctions" is an unknown key on 14/16/18/22 alike. This old alias parses cleanly on all of them.
 MaxEmptyLinesToKeep: 2                               # existing code frequently uses double blank lines; Google's default of 1 would touch far more of it
 ReflowComments: false                                # don't rewrap comment text/wording
 SortIncludes: Never                                  # WLED sometimes orders includes deliberately (platform/feature guards); alphabetising risks reordering them and breaking a build
 IndentPPDirectives: BeforeHash                       # makes nested #ifdef easier to read
+
 AlignConsecutiveBitFields: AcrossEmptyLines          # align bitfield definitions
 AllowShortBlocksOnASingleLine: true                  # while (true) { continue; } can be put on a single line
 AlignArrayOfStructures: Right                        # aligns array initializer colums
@@ -28,3 +41,5 @@ AlignConsecutiveAssignments:                         # aligns the "=" in consecu
   AlignCompound: true
   AcrossEmptyLines: false
   AcrossComments: false
+BinPackArguments: true
+BinPackParameters: true
