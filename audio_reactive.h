@@ -78,7 +78,7 @@ extern "C" esp_err_t adc1_lock_release(void) {
 
 
   #include <math.h>
-#endif
+#endif // ARDUINO_ARCH_ESP32
 
 #if defined(ARDUINO_ARCH_ESP32) && (defined(WLED_DEBUG) || defined(SR_DEBUG))
   #include <esp_timer.h>
@@ -267,7 +267,8 @@ static float sampleAvg   = 0.0f;                           // Smoothed Average s
 static float sampleAgc   = 0.0f;                           // Smoothed AGC sample
 static uint8_t soundAgc  = SR_AGC;                         // Automagic gain control: 0 - none, 1 - normal, 2 - vivid, 3 - lazy (config value) - enable AGC if default "squelch" was provided
 
-#endif
+#endif // ARDUINO_ARCH_ESP32
+
 static float volumeSmth         = 0.0f;                    // either sampleAvg or sampleAgc depending on soundAgc; smoothed sample
 static float FFT_MajorPeak      = 1.0f;                    // FFT: strongest (peak) frequency
 static float FFT_Magnitude      = 0.0f;                    // FFT: volume (magnitude) of peak frequency
@@ -317,8 +318,8 @@ static void detectSamplePeak(void);  // peak detection function (needs scaled FF
 static void autoResetPeak(void);     // peak auto-reset function
 static uint8_t maxVol = 31;          // (was 10) Reasonable value for constant volume for 'peak detector', as it won't always trigger  (deprecated)
 static uint8_t binNum = 8;           // Used to select the bin for FFT based beat detection  (deprecated)
-#ifdef ARDUINO_ARCH_ESP32
 
+#ifdef ARDUINO_ARCH_ESP32
 // use audio source class (ESP32 specific)
 #include "audio_source.h"
 constexpr int BLOCK_SIZE = 128;      // I2S buffer size (samples)
@@ -343,7 +344,6 @@ static uint8_t FFTScalingMode = 3;           // 0 none; 1 optimized logarithmic;
   #else
     static uint8_t pinkIndex = SR_FREQ_PROF; // 0: default; 1: line-in; 2: IMNP441
   #endif
-
 
 //
 // AGC presets
@@ -1277,7 +1277,7 @@ static void detectSamplePeak(void) {
   }
 }
 
-#endif
+#endif // ARDUINO_ARCH_ESP32
 
 static void autoResetPeak(void) {
   uint16_t MinShowDelay = MAX(50, strip.getMinShowDelay());         // Fixes private class variable compiler error. Unsure if this is the correct way of fixing the root problem. -THATDONFC
@@ -1346,7 +1346,8 @@ class AudioReactive : public Usermod {
   #else
     int8_t mclkPin = MCLK_PIN;
   #endif
-#endif
+#endif // ARDUINO_ARCH_ESP32
+
   // new "V2" audiosync struct - 44 Bytes
   struct __attribute__((packed)) audioSyncPacket {  // WLEDMM "packed" ensures that there are no additional gaps
     char header[6];                                 //  06 Bytes  offset 0 - "00002" for protocol version 2 ( includes \0 for c-style string termination)
@@ -1405,7 +1406,6 @@ class AudioReactive : public Usermod {
   // used for AGC
   int last_soundAgc         = -1;   // used to detect AGC mode change (for resetting AGC internal error buffers)
   double control_integrated = 0.0;  // persistent across calls to agcAvg(); "integrator control" = accumulated error
-
   // variables used by getSample() and agcAvg()
   double sampleMax     = 0.0;   // Max sample over a few seconds. Needed for AGC controller.
   double micLev        = 0.0;   // Used to convert returned value to have '0' as minimum. A leveller
@@ -1413,7 +1413,7 @@ class AudioReactive : public Usermod {
   float sampleReal     = 0.0f;  // "sampleRaw" as float, to provide bits that are lost otherwise (before amplification by sampleGain or inputLevel). Needed for AGC.
   int16_t sampleRaw    = 0;     // Current sample. Must only be updated ONCE!!! (amplified mic value by sampleGain and inputLevel)
   int16_t rawSampleAgc = 0;     // not smoothed AGC sample
-#endif
+#endif // ARDUINO_ARCH_ESP32
 
   // variables used in effects
   int16_t volumeRaw   = 0;     // either sampleRaw or rawSampleAgc depending on soundAgc
@@ -1489,7 +1489,7 @@ class AudioReactive : public Usermod {
   #endif
     PLOT_PRINTLN();
     PLOT_FLUSH();
-#endif
+#endif // MIC_LOGGER
 
 #ifdef FFT_SAMPLING_LOG
   #if 0
@@ -1536,11 +1536,10 @@ class AudioReactive : public Usermod {
     if (mapValuesToPlotterSpace) PLOT_PRINTF("max:%04d ", (printMaxVal ? 17 : 16) * 256);  // print line above the maximum value we expect to see on the plotter to avoid autoscaling y axis
     else { PLOT_PRINTF("max:%04d ", 256); }
     PLOT_PRINTLN();
-#endif                                                                                     // FFT_SAMPLING_LOG
+#endif // FFT_SAMPLING_LOG
   }  // logAudio()
 
 #ifdef ARDUINO_ARCH_ESP32
-
   //////////////////////
   // Audio Processing //
   //////////////////////
@@ -1791,8 +1790,7 @@ class AudioReactive : public Usermod {
     scaledvalue       = (scaledvalue - logMinSample) / (logMaxSample - logMinSample);  // 0...1
     return fminf(fmaxf(256.0f * scaledvalue, 0.0f), 255.0f);                           // scaled value
   }
-#endif
-
+#endif // ARDUINO_ARCH_ESP32
 
   /* Limits the dynamics of volumeSmth (= sampleAvg or sampleAgc). 
    * does not affect FFTResult[] or volumeRaw ( = sample or rawSampleAgc) 
@@ -1932,7 +1930,7 @@ class AudioReactive : public Usermod {
 
     frameCounter++;
   }  // transmitAudioData()
-#endif
+#endif // ARDUINO_ARCH_ESP32
 
   static bool isValidUdpSyncVersion(const char* header) { return strncmp_P(header, UDP_SYNC_HEADER, 6) == 0; }
   static bool isValidUdpSyncVersion_v1(const char* header) { return strncmp_P(header, UDP_SYNC_HEADER_v1, 6) == 0; }
@@ -2157,7 +2155,6 @@ class AudioReactive : public Usermod {
     }
 
 #ifdef ARDUINO_ARCH_ESP32
-
     // Reset I2S peripheral for good measure - not needed in esp-idf v4.4.x and later.
     #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 4, 0)
       i2s_driver_uninstall(I2S_NUM_0);                                                                                             // E (696) I2S: i2s_driver_uninstall(2006): I2S port 0 has not installed
@@ -2369,7 +2366,7 @@ class AudioReactive : public Usermod {
       USER_PRINTLN();
       USER_FLUSH();
     }
-    #endif
+    #endif // SR_DEBUG
     #if defined(ARDUINO_ARCH_ESP32) && defined(SR_DEBUG)
       DEBUGSR_PRINTF("|| %-9s min free stack %d\n", pcTaskGetTaskName(NULL), uxTaskGetStackHighWaterMark(NULL));  //WLEDMM
     #endif
@@ -2621,7 +2618,7 @@ class AudioReactive : public Usermod {
     } else {
       if ((sampleAvg >= 1)) maxSample5sec = fmaxf(maxSample5sec, (soundAgc) ? rawSampleAgc : sampleRaw);  // follow maximum volume
     }
-#else                                                                                                     // similar functionality for 8266 receive only - use VolumeSmth instead of raw sample data
+#else // similar functionality for 8266 receive only - use VolumeSmth instead of raw sample data
     if ((millis() - sampleMaxTimer) > CYCLE_SAMPLEMAX) {
       sampleMaxTimer = millis();
       maxSample5sec  = (0.15 * maxSample5sec) + 0.85 * volumeSmth;              // reset, and start with some smoothing
