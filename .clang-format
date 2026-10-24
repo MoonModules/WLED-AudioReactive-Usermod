@@ -19,3 +19,4 @@ KeepEmptyLinesAtTheStartOfBlocks: true                # deliberately kept in its
 MaxEmptyLinesToKeep: 2                               # existing code frequently uses double blank lines; Google's default of 1 would touch far more of it
 ReflowComments: false                                # don't rewrap comment text/wording
 SortIncludes: Never                                  # WLED sometimes orders includes deliberately (platform/feature guards); alphabetising risks reordering them and breaking a build
+IndentPPDirectives: BeforeHash                       # makes nested #ifdef easier to read
