@@ -35,7 +35,7 @@ IndentPPDirectives: BeforeHash                       # makes nested #ifdef easie
 
 AlignConsecutiveBitFields: AcrossEmptyLines          # align bitfield definitions
 AllowShortBlocksOnASingleLine: true                  # while (true) { continue; } can be put on a single line
-AlignArrayOfStructures: Right                        # aligns array initializer colums
+AlignArrayOfStructures: Right                        # aligns array initializer columns
 AlignConsecutiveAssignments:                         # aligns the "=" in consecutive assignment rows. A matter of taste, but I do like it.
   Enabled: true
   AlignCompound: true
