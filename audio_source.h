@@ -17,18 +17,14 @@
   #if (ESP_IDF_VERSION_MAJOR < 5)
     #include <soc/i2s_reg.h>  // needed for SPH0465 timing workaround (classic ESP32)
   #endif
-  #if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0))
-    #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
-      #include <driver/adc.h>
-      #include <driver/adc_deprecated.h>
-      #include <driver/adc_types_deprecated.h>
-    #endif
-    // type of i2s_config_t.SampleRate was changed from "int" to "unsigned" in IDF 4.4.x
-    // also matches i2s_std_clk_config_t.sample_rate_hz of the IDF V5 driver
-    #define SRate_t uint32_t
-  #else
-    #define SRate_t int
+  #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
+    #include <driver/adc.h>
+    #include <driver/adc_deprecated.h>
+    #include <driver/adc_types_deprecated.h>
   #endif
+  // type of i2s_config_t.SampleRate was changed from "int" to "unsigned" in IDF 4.4.x
+  // also matches i2s_std_clk_config_t.sample_rate_hz of the IDF V5 driver
+  #define SRate_t uint32_t
 
   #if (ESP_IDF_VERSION_MAJOR < 4) || (ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 4, 7))  // backwards compatibility patch
     #define ADC_ATTEN_DB_12 ADC_ATTEN_DB_11
@@ -274,11 +270,7 @@ class I2SSource : public AudioSource {
           //.fixed_mclk = 0,
           .bits_per_chan = I2S_data_size,
         #else // ESP-IDF v3.x
-          .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
-          .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
-          .dma_buf_count        = 8,
-          .dma_buf_len          = _blockSize,
-          .use_apll             = false
+          #error "esp-idf V3.x is not supported"
         #endif
     };
   }
@@ -299,12 +291,10 @@ class I2SSource : public AudioSource {
         return;
       }
     } else {
-    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-        #if !defined(SOC_I2S_SUPPORTS_PDM_RX)
-          #warning this MCU does not support PDM microphones
-        #endif
-    #endif
-    #if defined(SOC_I2S_SUPPORTS_PDM_RX) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S2)
+      #if !defined(SOC_I2S_SUPPORTS_PDM_RX)
+        #warning this MCU does not support PDM microphones
+      #endif
+      #if defined(SOC_I2S_SUPPORTS_PDM_RX) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S2)
       // This is an I2S PDM microphone, these microphones only use a clock and
       // data line, to make it simpler to debug, use the WS pin as CLK and SD pin as DATA
       // example from espressif: https://github.com/espressif/esp-idf/blob/release/v4.4/examples/peripherals/i2s/i2s_audio_recorder_sdcard/main/i2s_recorder_main.c
@@ -318,10 +308,9 @@ class I2SSource : public AudioSource {
       _config.channel_format = I2S_PDM_MIC_CHANNEL;                                       // seems that PDM mono mode always uses left channel.
       _config.use_apll       = true;                                                      // experimental - use aPLL clock source to improve sampling quality
       //_config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;                     // not needed
-    #endif
+      #endif
     }
 
-  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
     if ((_i2sMaster == false) && (_config.mode & I2S_MODE_SLAVE)) {  // I2S slave mode (experimental).
       // Seems we need to drive clocks in slave mode
       _config.use_apll   = true;
@@ -345,7 +334,6 @@ class I2SSource : public AudioSource {
     #if defined(WLED_USE_ETHERNET) || defined(WLED_ENABLE_HUB75MATRIX)
       _config.use_apll = false;                                  // APLL is needed for Ethernet, and possibly for HUB75, too
     #endif
-  #endif
 
     if (_i2sMaster == false) {
       DEBUG_PRINTLN(F("AR: Warning - i2S SLAVE mode is experimental!"));
@@ -363,13 +351,11 @@ class I2SSource : public AudioSource {
       if (!ar_allocatePin(mclkPin, true, PinOwner::UM_Audioreactive)) {
         ERRORSR_PRINTF("\nAR: Failed to allocate I2S pin: MCLK=%d\n", mclkPin);
         return;
-      } else _routeMclk(mclkPin);
+      }
     }
 
     _pinConfig = {
-      #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
         .mck_io_num = mclkPin,  // "classic" ESP32 supports setting MCK on GPIO0/GPIO1/GPIO3 only. i2s_set_pin() will fail if wrong mck_io_num is provided.
-      #endif
         .bck_io_num   = i2sckPin,
         .ws_io_num    = i2swsPin,
         .data_out_num = I2S_PIN_NO_CHANGE,
@@ -402,7 +388,6 @@ class I2SSource : public AudioSource {
       return;
     }
 
-  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
     // ToDO: seems that this sometimes reverts PDM timing configuration
     err = i2s_set_clk(AR_I2S_PORT, _sampleRate, I2S_SAMPLE_RESOLUTION, I2S_CHANNEL_MONO);  // set bit clocks. Also takes care of MCLK routing if needed.
     if (err != ESP_OK) {
@@ -410,7 +395,6 @@ class I2SSource : public AudioSource {
       i2s_driver_uninstall(AR_I2S_PORT);                                                   // uninstall already-installed driver
       return;
     }
-  #endif
     _initialized = true;
   }
 
@@ -467,27 +451,6 @@ class I2SSource : public AudioSource {
   }
 
  protected:
-  void _routeMclk(int8_t mclkPin) {
-  #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(__riscv) && !defined(CONFIG_IDF_TARGET_ESP32S3)
-    // MCLK routing by writing registers is not needed any more with IDF > 4.4.0
-    #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 4, 0)
-      // this way of MCLK routing only works on "classic" ESP32
-      /* Enable the mclk routing depending on the selected mclk pin (ESP32: only 0,1,3)
-       *  Only I2S_NUM_0 is supported
-       */
-      if (mclkPin == GPIO_NUM_0) {
-        PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0_CLK_OUT1);
-        WRITE_PERI_REG(PIN_CTRL, 0xFFF0);
-      } else if (mclkPin == GPIO_NUM_1) {
-        PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0TXD_U, FUNC_U0TXD_CLK_OUT3);
-        WRITE_PERI_REG(PIN_CTRL, 0xF0F0);
-      } else { 
-        PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0RXD_U, FUNC_U0RXD_CLK_OUT2);
-        WRITE_PERI_REG(PIN_CTRL, 0xFF00);
-      }
-    #endif
-  #endif
-  }
 
   i2s_config_t _config;
   i2s_pin_config_t _pinConfig;
@@ -880,11 +843,7 @@ class WM8978Source : public I2SSource {
     _wm8978I2cWrite(2, 0b110111111);  // Power Management 2 - enable output and amp stages (amps may lift signal but it works better on the ADCs)
     _wm8978I2cWrite(3, 0b000001100);  // Power Management 3 - enable L&R output mixers
 
-    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-      _wm8978I2cWrite(4, 0b001010000);  // Audio Interface - standard I2S, 24-bit
-    #else
-      _wm8978I2cWrite(4, 0b001001000);  // Audio Interface - left-justified I2S, 24-bit
-    #endif
+    _wm8978I2cWrite(4, 0b001010000);  // Audio Interface - standard I2S, 24-bit
 
     _wm8978I2cWrite(6, 0b000000000);   // Clock generation control - use external mclk
     _wm8978I2cWrite(7, 0b000000100);   // Sets sample rate to ~24kHz (only used for internal calculations, not I2S)
@@ -1028,10 +987,8 @@ class AC101Source : public I2SSource {
   void deinitialize() { I2SSource::deinitialize(); }
 };
 
-  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-    #if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
-      #warning this MCU does not support analog sound input
-    #endif
+  #if !defined(SOC_I2S_SUPPORTS_ADC) && !defined(SOC_I2S_SUPPORTS_ADC_DAC)
+    #warning this MCU does not support analog sound input
   #endif
 
 #if defined(CONFIG_IDF_TARGET_ESP32) && defined(SOC_I2S_SUPPORTS_ADC) && (ESP_IDF_VERSION_MAJOR < 5)
@@ -1049,11 +1006,7 @@ class I2SAdcSource : public I2SSource {
                .sample_rate     = _sampleRate,
                .bits_per_sample = I2S_SAMPLE_RESOLUTION,
                .channel_format  = I2S_CHANNEL_FMT_ONLY_LEFT,
-    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
                .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
-    #else
-               .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
-    #endif
                .intr_alloc_flags   = ESP_INTR_FLAG_LEVEL1,
                .dma_buf_count      = 8,
                .dma_buf_len        = _blockSize,
