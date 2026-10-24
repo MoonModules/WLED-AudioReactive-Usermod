@@ -20,3 +20,11 @@ MaxEmptyLinesToKeep: 2                               # existing code frequently 
 ReflowComments: false                                # don't rewrap comment text/wording
 SortIncludes: Never                                  # WLED sometimes orders includes deliberately (platform/feature guards); alphabetising risks reordering them and breaking a build
 IndentPPDirectives: BeforeHash                       # makes nested #ifdef easier to read
+AlignConsecutiveBitFields: AcrossEmptyLines          # align bitfield definitions
+AllowShortBlocksOnASingleLine: true                  # while (true) { continue; } can be put on a single line
+AlignArrayOfStructures: Right                        # aligns array initializer colums
+AlignConsecutiveAssignments:                         # aligns the "=" in consecutive assignment rows. A matter of taste, but I do like it.
+  Enabled: true
+  AlignCompound: true
+  AcrossEmptyLines: false
+  AcrossComments: false
